@@ -3347,6 +3347,7 @@ class PrintScheduler:
                     socket_timeout=ftp_timeout,
                     printer_model=printer.model,
                     progress_callback=progress_bridge,
+                    serial_number=printer.serial_number,
                     max_retries=ftp_retry_count,
                     retry_delay=ftp_retry_delay,
                     operation_name=f"Upload print to {printer.name}",
@@ -3360,6 +3361,7 @@ class PrintScheduler:
                     socket_timeout=ftp_timeout,
                     printer_model=printer.model,
                     progress_callback=progress_bridge,
+                    serial_number=printer.serial_number,
                 )
         except UploadCancelled as e:
             uploaded = False

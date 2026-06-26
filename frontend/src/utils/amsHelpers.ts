@@ -38,7 +38,11 @@ export function normalizeColorForCompare(color: string | undefined): string {
  * inferred from the id alone — regular AMS IDs 0-3 can collide with the
  * normalized HT range otherwise.
  */
-export function getAmsLabel(amsId: number | string, trayCount: number): string {
+export function getAmsLabel(
+  amsId: number | string,
+  trayCount: number,
+  moduleType?: string | null,
+): string {
   const id = typeof amsId === 'string' ? parseInt(amsId, 10) : amsId;
   const safeId = isNaN(id) ? 0 : id;
   if (safeId === 255) return 'External';
@@ -46,6 +50,9 @@ export function getAmsLabel(amsId: number | string, trayCount: number): string {
   // ingest (see a2l-am-unit-16). No regular AMS uses id 6, so this is a safe,
   // self-scoping label for the Lite's 4-slot unit.
   if (safeId === 6) return 'AMS Lite';
+  if (moduleType === 'flashforge_ifs') {
+    return `IFS-${String.fromCharCode(65 + safeId)}`;
+  }
   const isHt = trayCount === 1;
   const normalizedId = safeId >= 128 ? safeId - 128 : safeId;
   const letter = String.fromCharCode(65 + normalizedId);

@@ -3,8 +3,9 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Layers, Clock, Timer, Printer } from 'lucide-react';
-import { api, ApiError, withStreamToken } from '../api/client';
+import { api, ApiError, getStreamToken, withStreamToken } from '../api/client';
 import { formatDuration, formatETA, type TimeFormat } from '../utils/date';
+import { useAuth } from '../contexts/AuthContext';
 
 type TFunction = (key: string, options?: Record<string, unknown>) => string;
 
@@ -112,6 +113,7 @@ export function StreamOverlayPage() {
   const [searchParams] = useSearchParams();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { authEnabled, user } = useAuth();
   const id = parseInt(printerId || '0', 10);
   const [imageKey, setImageKey] = useState(Date.now());
 
@@ -153,6 +155,13 @@ export function StreamOverlayPage() {
     queryFn: api.getSettings,
     enabled: !kiosk,
   });
+  const { data: streamTokenData } = useQuery({
+    queryKey: ['camera-stream-token', user?.id ?? null],
+    queryFn: () => api.getCameraStreamToken(),
+    enabled: id > 0 && config.showCamera && (authEnabled ? !!user : true),
+    staleTime: 50 * 60 * 1000,
+  });
+  const streamTokenValue = streamTokenData?.token ?? getStreamToken();
 
   // Normalize the two sources into the shape the render below reads. Memoized
   // because the title effect depends on `printer` — a fresh object literal each
@@ -262,14 +271,19 @@ export function StreamOverlayPage() {
   // module cache — the cache is populated by an effect and would miss the first
   // render (a 401 flash before the retry). The logged-in path keeps the cache.
   const camPath = `/api/v1/printers/${id}/camera/stream?fps=${config.fps}&t=${imageKey}`;
+  const waitingForStreamToken = !kiosk && authEnabled && config.showCamera && !streamTokenValue;
+  const appendStreamToken = (url: string) =>
+    streamTokenValue ? `${url}&token=${encodeURIComponent(streamTokenValue)}` : withStreamToken(url);
   const streamUrl = kiosk && token
     ? `${camPath}&token=${encodeURIComponent(token)}`
-    : withStreamToken(camPath);
+    : waitingForStreamToken
+      ? ''
+      : appendStreamToken(camPath);
 
   return (
     <div className="min-h-screen bg-black relative overflow-hidden">
       {/* Camera feed - fullscreen background (optional) */}
-      {config.showCamera && (
+      {config.showCamera && !waitingForStreamToken && (
         <img
           key={imageKey}
           src={streamUrl}
