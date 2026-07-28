@@ -24,10 +24,24 @@ from backend.app.services.firmware_update import (
     get_upload_state,
 )
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.printer_providers import PROVIDER_BAMBU, provider_for_printer
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/firmware", tags=["firmware"])
+
+
+async def _load_bambu_printer(db: AsyncSession, printer_id: int) -> Printer:
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    if provider_for_printer(printer) != PROVIDER_BAMBU:
+        raise HTTPException(
+            status_code=501,
+            detail="Firmware checking and upload are only supported for Bambu Lab printers",
+        )
+    return printer
 
 
 class AvailableFirmwareVersion(BaseModel):
@@ -94,6 +108,8 @@ async def check_firmware_updates(
     updates_available = 0
 
     for printer in printers:
+        if provider_for_printer(printer) != PROVIDER_BAMBU:
+            continue
         # Get current firmware version from MQTT state
         current_version = None
         mqtt_client = printer_manager.get_client(printer.id)
@@ -136,11 +152,7 @@ async def check_printer_firmware(
     firmware_service = get_firmware_service()
 
     # Get printer from database
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-
-    if not printer:
-        raise HTTPException(status_code=404, detail="Printer not found")
+    printer = await _load_bambu_printer(db, printer_id)
 
     # Get current firmware version from MQTT state
     current_version = None
@@ -246,6 +258,7 @@ async def prepare_firmware_upload(
     Call this before starting a firmware upload to ensure the operation
     can succeed.
     """
+    await _load_bambu_printer(db, printer_id)
     update_service = get_firmware_update_service()
     result = await update_service.prepare_update(printer_id, db, target_version=version)
     return FirmwareUploadPrepareResponse(**result)
@@ -271,6 +284,7 @@ async def start_firmware_upload(
     After upload completes, the user must trigger the update from the
     printer's screen (Settings > Firmware).
     """
+    await _load_bambu_printer(db, printer_id)
     # First check prerequisites
     update_service = get_firmware_update_service()
     prepare_result = await update_service.prepare_update(printer_id, db, target_version=version)
@@ -306,6 +320,7 @@ async def start_firmware_upload(
 @router.get("/updates/{printer_id}/upload/status", response_model=FirmwareUploadStatusResponse)
 async def get_firmware_upload_status(
     printer_id: int,
+    db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.FIRMWARE_READ),
 ):
     """
@@ -315,6 +330,7 @@ async def get_firmware_upload_status(
     For real-time updates, connect to WebSocket and listen for
     "firmware_upload_progress" messages.
     """
+    await _load_bambu_printer(db, printer_id)
     state = get_upload_state(printer_id)
     return FirmwareUploadStatusResponse(
         status=state.status.value,

@@ -7,7 +7,7 @@ from backend.app.core.database import Base
 
 
 class PrinterSensorHistory(Base):
-    """Historical heater readings (nozzle / nozzle_2 / bed / chamber).
+    """Historical heater readings (dynamic tools plus bed/chamber).
 
     Parallel to AMSSensorHistory, but per-(printer, sensor_kind) rather
     than per-(printer, ams_id). Sensor counts vary by model (single vs
@@ -20,7 +20,7 @@ class PrinterSensorHistory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"))
-    sensor_kind: Mapped[str] = mapped_column(String(32))  # nozzle | nozzle_2 | bed | chamber
+    sensor_kind: Mapped[str] = mapped_column(String(32))  # nozzle | tool_N | bed | chamber
     value: Mapped[float | None] = mapped_column(Float)  # current temperature, Celsius
     target: Mapped[float | None] = mapped_column(Float)  # target temperature when set, Celsius
     recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)

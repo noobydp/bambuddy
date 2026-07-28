@@ -33,18 +33,30 @@ const TIME_RANGES: { value: TimeRange; label: string; hours: number }[] = [
   { value: '7d', label: '7d', hours: 168 },
 ];
 
-const KIND_COLORS: Record<HeaterSensorKind, string> = {
+const BASE_KIND_COLORS: Record<string, string> = {
   nozzle: '#fb923c',
   nozzle_2: '#f97316',
   bed: '#60a5fa',
   chamber: '#34d399',
 };
 
-const KIND_TARGET_COLORS: Record<HeaterSensorKind, string> = {
+const BASE_KIND_TARGET_COLORS: Record<string, string> = {
   nozzle: '#fed7aa',
   nozzle_2: '#fdba74',
   bed: '#bfdbfe',
   chamber: '#a7f3d0',
+};
+
+const TOOL_COLORS = ['#fb923c', '#f97316', '#f59e0b', '#eab308', '#a855f7', '#ec4899'];
+const TOOL_TARGET_COLORS = ['#fed7aa', '#fdba74', '#fde68a', '#fef08a', '#e9d5ff', '#fbcfe8'];
+
+const kindColor = (kind: HeaterSensorKind, target = false) => {
+  const base = target ? BASE_KIND_TARGET_COLORS : BASE_KIND_COLORS;
+  if (base[kind]) return base[kind];
+  const match = /^tool_(\d+)$/.exec(kind);
+  const index = match ? Number(match[1]) : 0;
+  const palette = target ? TOOL_TARGET_COLORS : TOOL_COLORS;
+  return palette[index % palette.length];
 };
 
 export function HeaterHistoryModal({
@@ -156,11 +168,15 @@ export function HeaterHistoryModal({
         return t('printers.heaterHistory.bed', 'Bed');
       case 'chamber':
         return t('printers.heaterHistory.chamber', 'Chamber');
+      default: {
+        const match = /^tool_(\d+)$/.exec(k);
+        return match ? t('printers.heaterHistory.tool', { number: Number(match[1]) + 1, defaultValue: `Tool ${Number(match[1]) + 1}` }) : k;
+      }
     }
   };
 
   const KindIcon = ({ k }: { k: HeaterSensorKind }) => {
-    if (k === 'nozzle' || k === 'nozzle_2') return <Flame className="w-4 h-4" />;
+    if (k === 'nozzle' || k === 'nozzle_2' || k.startsWith('tool_')) return <Flame className="w-4 h-4" />;
     if (k === 'bed') return <Square className="w-4 h-4" />;
     return <Box className="w-4 h-4" />;
   };
@@ -199,7 +215,7 @@ export function HeaterHistoryModal({
                   className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition-colors ${
                     kind === k ? 'text-white' : ''
                   }`}
-                  style={kind === k ? { backgroundColor: KIND_COLORS[k] } : { color: textSecondary }}
+                  style={kind === k ? { backgroundColor: kindColor(k) } : { color: textSecondary }}
                 >
                   <KindIcon k={k} />
                   {kindLabel(k)}
@@ -227,7 +243,7 @@ export function HeaterHistoryModal({
             <div className="rounded-lg p-4" style={{ backgroundColor: cardBg }}>
               <p className="text-xs" style={{ color: textSecondary }}>{t('common.current', 'Current')}</p>
               <div className="flex items-center gap-2">
-                <p className="text-2xl font-bold" style={{ color: KIND_COLORS[kind] }}>
+                <p className="text-2xl font-bold" style={{ color: kindColor(kind) }}>
                   {currentValue != null ? `${Math.round(currentValue)}°C` : '—'}
                 </p>
                 <TrendIcon trend={trend} />
@@ -317,7 +333,7 @@ export function HeaterHistoryModal({
                     type="monotone"
                     dataKey="value"
                     name={t('common.current', 'Current')}
-                    stroke={KIND_COLORS[kind]}
+                    stroke={kindColor(kind)}
                     strokeWidth={2}
                     dot={false}
                     isAnimationActive={false}
@@ -326,7 +342,7 @@ export function HeaterHistoryModal({
                     type="stepAfter"
                     dataKey="target"
                     name={t('common.target', 'Target')}
-                    stroke={KIND_TARGET_COLORS[kind]}
+                    stroke={kindColor(kind, true)}
                     strokeDasharray="4 4"
                     strokeWidth={1.5}
                     dot={false}

@@ -20,10 +20,10 @@ from backend.app.services.camera import get_camera_port
 from backend.app.services.discovery import is_running_in_docker
 from backend.app.services.flashforge_local import (
     DEFAULT_FLASHFORGE_PORT,
-    is_flashforge_model,
     probe_flashforge_connection,
 )
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.printer_providers import PROVIDER_FLASHFORGE, normalize_printer_provider
 from backend.app.utils.printer_models import has_external_storage, has_remote_storage_toggle
 
 logger = logging.getLogger(__name__)
@@ -152,8 +152,14 @@ def _append_environment_checks(checks: list[DiagnosticCheck], ip_address: str) -
     return network_mode
 
 
-async def _run_flashforge_diagnostic(ip_address: str, printer: Printer) -> PrinterDiagnosticResult:
-    """Run FlashForge-specific connection checks for a saved printer."""
+async def _run_flashforge_diagnostic(
+    ip_address: str,
+    *,
+    printer: Printer | None = None,
+    serial_number: str | None = None,
+    access_code: str | None = None,
+) -> PrinterDiagnosticResult:
+    """Run FlashForge-specific checks for saved and pre-save printers."""
     checks: list[DiagnosticCheck] = []
 
     api_ok, camera_ok = await asyncio.gather(
@@ -165,8 +171,9 @@ async def _run_flashforge_diagnostic(ip_address: str, printer: Printer) -> Print
 
     _append_environment_checks(checks, ip_address)
 
-    serial_number = getattr(printer, "serial_number", None)
-    access_code = getattr(printer, "access_code", None)
+    if printer is not None:
+        serial_number = getattr(printer, "serial_number", None)
+        access_code = getattr(printer, "access_code", None)
     if not api_ok:
         checks.append(DiagnosticCheck(id="flashforge_auth", status="skip"))
     elif serial_number and access_code:
@@ -183,8 +190,8 @@ async def _run_flashforge_diagnostic(ip_address: str, printer: Printer) -> Print
     else:
         checks.append(DiagnosticCheck(id="flashforge_auth", status="fail"))
 
-    state = printer_manager.get_status(printer.id)
-    if state is None:
+    state = printer_manager.get_status(printer.id) if printer is not None else None
+    if printer is None or state is None:
         checks.append(DiagnosticCheck(id="flashforge_polling", status="skip"))
     elif getattr(state, "connected", False):
         checks.append(DiagnosticCheck(id="flashforge_polling", status="pass"))
@@ -200,7 +207,7 @@ async def _run_flashforge_diagnostic(ip_address: str, printer: Printer) -> Print
         overall = "ok"
 
     return PrinterDiagnosticResult(
-        printer_id=printer.id,
+        printer_id=printer.id if printer is not None else None,
         ip_address=ip_address,
         overall=overall,
         checks=checks,
@@ -213,19 +220,33 @@ async def run_connection_diagnostic(
     printer: Printer | None = None,
     serial_number: str | None = None,
     access_code: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
     wait_for_publish_seconds: float = 0.0,
 ) -> PrinterDiagnosticResult:
     """Run connection checks for a printer.
 
     Works for an existing saved printer (pass ``printer``) and for the
-    pre-save Add-Printer flow (pass ``serial_number`` + ``access_code``).
+    pre-save Add-Printer flow (pass ``model``, ``serial_number``, and
+    ``access_code``).
 
     Each check carries a stable ``id`` and a ``status`` of
     pass / fail / warn / skip; the frontend renders the human-readable
     title and fix text (localized) keyed on that id + status.
     """
-    if printer is not None and is_flashforge_model(getattr(printer, "model", None)):
-        return await _run_flashforge_diagnostic(ip_address, printer)
+    effective_model = getattr(printer, "model", None) if printer is not None else model
+    effective_provider = (
+        getattr(printer, "provider", None)
+        if printer is not None
+        else provider
+    )
+    if normalize_printer_provider(effective_provider, effective_model) == PROVIDER_FLASHFORGE:
+        return await _run_flashforge_diagnostic(
+            ip_address,
+            printer=printer,
+            serial_number=serial_number,
+            access_code=access_code,
+        )
 
     checks: list[DiagnosticCheck] = []
 

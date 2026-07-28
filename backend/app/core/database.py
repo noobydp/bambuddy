@@ -3787,6 +3787,22 @@ async def run_migrations(conn):
     # names by appending " Email" (#1792). See ``_migrate_rename_user_print_template_names``.
     await _migrate_rename_user_print_template_names(conn)
 
+    # Migration: persist the protocol provider instead of repeatedly inferring
+    # it from a display-model string. Existing Creator 5 Pro rows are backfilled
+    # explicitly; all other legacy rows keep the Bambu provider.
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN provider VARCHAR(30) DEFAULT 'bambu'")
+    async with conn.begin_nested():
+        await conn.execute(
+            text(
+                "UPDATE printers SET provider = 'flashforge' "
+                "WHERE UPPER(REPLACE(REPLACE(COALESCE(model, ''), ' ', ''), '-', '')) "
+                "LIKE '%CREATOR5PRO%'"
+            )
+        )
+        await conn.execute(
+            text("UPDATE printers SET provider = 'bambu' WHERE provider IS NULL OR TRIM(provider) = ''")
+        )
+
 
 _USER_PRINT_TEMPLATE_RENAMES: tuple[tuple[str, str, str], ...] = (
     ("user_print_start", "User Print Started", "User Print Started Email"),

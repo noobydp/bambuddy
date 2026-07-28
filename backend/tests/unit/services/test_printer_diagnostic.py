@@ -284,6 +284,26 @@ class TestPreAddFlow:
 
 
 class TestFlashForgePrinter:
+    async def test_pre_add_flashforge_uses_local_api_checks(self):
+        with _Env(flashforge_connection_success=True):
+            result = await run_connection_diagnostic(
+                "192.168.1.50",
+                model="FlashForge Creator 5 Pro",
+                serial_number="FF-TEST-SERIAL",
+                access_code="ff-test-key",
+            )
+        s = _statuses(result)
+        assert result.printer_id is None
+        assert result.overall == "ok"
+        assert s == {
+            "port_flashforge_api": "pass",
+            "port_flashforge_camera": "pass",
+            "network_mode": "pass",
+            "subnet": "pass",
+            "flashforge_auth": "pass",
+            "flashforge_polling": "skip",
+        }
+
     async def test_flashforge_uses_local_api_checks(self):
         with _Env(
             state=_state(connected=True),

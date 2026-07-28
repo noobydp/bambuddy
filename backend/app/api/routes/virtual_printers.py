@@ -11,6 +11,7 @@ from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.models.user import User
 from backend.app.schemas.virtual_printer import VPDiagnosticResult
+from backend.app.services.printer_providers import PROVIDER_BAMBU, provider_for_printer
 
 # Imported at module scope so tests can patch
 # backend.app.api.routes.virtual_printers.tailscale_service.
@@ -194,6 +195,11 @@ async def create_virtual_printer(
         if not target_printer:
             return JSONResponse(
                 status_code=400, content={"detail": f"Printer with ID {body.target_printer_id} not found"}
+            )
+        if provider_for_printer(target_printer) != PROVIDER_BAMBU:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Virtual Printer targets must use the Bambu LAN protocol"},
             )
 
     # Validate bind_ip uniqueness (against all enabled VPs)
@@ -414,6 +420,11 @@ async def update_virtual_printer(
         if not target_printer:
             return JSONResponse(
                 status_code=400, content={"detail": f"Printer with ID {body.target_printer_id} not found"}
+            )
+        if provider_for_printer(target_printer) != PROVIDER_BAMBU:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Virtual Printer targets must use the Bambu LAN protocol"},
             )
         vp.target_printer_id = body.target_printer_id
         # Auto-inherit model from target printer in proxy mode (unless user explicitly set model)

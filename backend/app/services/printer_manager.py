@@ -14,6 +14,11 @@ from backend.app.services.flashforge_local import (
     is_flashforge_model,
     probe_flashforge_connection,
 )
+from backend.app.services.printer_providers import (
+    PROVIDER_FLASHFORGE,
+    normalize_printer_provider,
+    provider_for_printer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -338,8 +343,9 @@ class PrinterManager:
     """Manager for multiple printer connections."""
 
     def __init__(self):
-        self._clients: dict[int, BambuMQTTClient] = {}
+        self._clients: dict[int, BambuMQTTClient | FlashForgeLocalClient] = {}
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
+        self._providers: dict[int, str] = {}
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
         self._on_print_start: Callable[[int, dict], None] | None = None
         self._on_print_complete: Callable[[int, dict], None] | None = None
@@ -613,7 +619,8 @@ class PrinterManager:
             if self._on_assignment_verified:
                 self._schedule_async(self._on_assignment_verified(printer_id, ams_id, tray_id, verified, detail))
 
-        if is_flashforge_model(printer.model):
+        provider = provider_for_printer(printer)
+        if provider == PROVIDER_FLASHFORGE:
             client = FlashForgeLocalClient(
                 ip_address=printer.ip_address,
                 serial_number=printer.serial_number,
@@ -644,6 +651,7 @@ class PrinterManager:
         client.connect()
         self._clients[printer_id] = client
         self._models[printer_id] = printer.model  # Cache model for feature detection
+        self._providers[printer_id] = provider
         self._printer_info[printer_id] = PrinterInfo(printer.name, printer.serial_number)
 
         # Wait a moment for connection
@@ -656,6 +664,7 @@ class PrinterManager:
             self._clients[printer_id].disconnect(timeout=timeout)
             del self._clients[printer_id]
         self._models.pop(printer_id, None)  # Clean up model cache
+        self._providers.pop(printer_id, None)
         self._printer_info.pop(printer_id, None)  # Clean up printer info cache
 
     def disconnect_all(self, timeout: float = 0):
@@ -704,7 +713,7 @@ class PrinterManager:
         ``BambuMQTTClient``).
         """
         client = self._clients.get(printer_id)
-        return client._drying_targets if client else None
+        return getattr(client, "_drying_targets", None) if client else None
 
     def get_all_statuses(self) -> dict[int, PrinterState]:
         """Get status of all connected printers (checks for stale connections)."""
@@ -723,8 +732,8 @@ class PrinterManager:
             return client.check_staleness()
         return False
 
-    def get_client(self, printer_id: int) -> BambuMQTTClient | None:
-        """Get the MQTT client for a printer."""
+    def get_client(self, printer_id: int) -> BambuMQTTClient | FlashForgeLocalClient | None:
+        """Get the active provider client for a printer."""
         return self._clients.get(printer_id)
 
     def mark_printer_offline(self, printer_id: int):
@@ -744,7 +753,8 @@ class PrinterManager:
 
         if printer_id in self._clients:
             client = self._clients[printer_id]
-            if client.mark_power_off():
+            mark_power_off = getattr(client, "mark_power_off", None)
+            if mark_power_off and mark_power_off():
                 logger.info("Marking printer %s as offline (smart plug power off)", printer_id)
                 # Trigger the status change callback to broadcast via WebSocket
                 if self._on_status_change:
@@ -913,6 +923,7 @@ class PrinterManager:
         serial_number: str,
         access_code: str,
         model: str | None = None,
+        provider: str | None = None,
     ) -> dict:
         """Test connection to a printer without persisting.
 
@@ -924,7 +935,7 @@ class PrinterManager:
         original synchronous teardown produced the #1445 "Docker container
         hangs" symptom on P1S when called from POST /printers/.
         """
-        if is_flashforge_model(model):
+        if normalize_printer_provider(provider, model) == PROVIDER_FLASHFORGE:
             return await probe_flashforge_connection(ip_address, serial_number, access_code)
 
         client = BambuMQTTClient(

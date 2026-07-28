@@ -78,6 +78,21 @@ class TestPrinterManager:
     def test_init_callbacks_are_none(self, manager):
         """Verify all callbacks are initially None."""
         assert manager._on_print_start is None
+
+    def test_get_drying_targets_handles_non_bambu_client(self, manager):
+        """Printer-family clients without Bambu drying state return no targets."""
+        manager._clients[1] = object()
+
+        assert manager.get_drying_targets(1) is None
+
+    def test_get_drying_targets_returns_bambu_cache(self, manager):
+        """Bambu clients still expose their cached active drying targets."""
+        expected = {0: {"filament": "PETG", "temp": 65}}
+        client = MagicMock()
+        client._drying_targets = expected
+        manager._clients[1] = client
+
+        assert manager.get_drying_targets(1) == expected
         assert manager._on_print_complete is None
         assert manager._on_status_change is None
         assert manager._on_ams_change is None

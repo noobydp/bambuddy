@@ -13,6 +13,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { VirtualPrinterDiagnosticModal } from './VirtualPrinterDiagnosticModal';
 import { useToast } from '../contexts/ToastContext';
 import { copyTextToClipboard } from '../utils/clipboard';
+import { isBambuPrinter } from '../utils/printer';
 
 type LocalMode = 'archive' | 'review' | 'queue' | 'proxy';
 
@@ -111,6 +112,7 @@ export function VirtualPrinterCard({ printer, models }: VirtualPrinterCardProps)
     queryKey: ['printers'],
     queryFn: api.getPrinters,
   });
+  const compatiblePrinters = printers?.filter(isBambuPrinter);
 
   // Fetch network interfaces
   const { data: networkInterfaces } = useQuery({
@@ -627,7 +629,7 @@ export function VirtualPrinterCard({ printer, models }: VirtualPrinterCardProps)
                   className="w-full bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-md px-3 py-1.5 text-white text-sm appearance-none cursor-pointer disabled:opacity-50 pr-10"
                 >
                   <option value="">{t('virtualPrinter.targetPrinter.placeholder')}</option>
-                  {printers?.map((p) => (
+                  {compatiblePrinters?.map((p) => (
                     <option key={p.id} value={p.id}>{p.name} ({p.ip_address})</option>
                   ))}
                 </select>

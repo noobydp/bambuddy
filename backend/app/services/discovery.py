@@ -312,11 +312,13 @@ class PrinterDiscoveryService:
 
 
 class SubnetScanner:
-    """Scanner for discovering Bambu printers by probing IP addresses."""
+    """Scanner for discovering supported printers by probing LAN ports."""
 
     # Bambu printer ports
     MQTT_PORT = 8883
     FTP_PORT = 990
+    # FlashForge Creator 5 Pro local HTTP API
+    FLASHFORGE_API_PORT = 8898
 
     def __init__(self):
         self._discovered: dict[str, DiscoveredPrinter] = {}
@@ -387,18 +389,26 @@ class SubnetScanner:
             self._running = False
 
     async def _probe_host(self, ip: str, timeout: float):
-        """Probe a single host for Bambu printer ports."""
-        # Check FTP port (990) - more reliable indicator
-        ftp_open = await self._check_port(ip, self.FTP_PORT, timeout)
-        if not ftp_open:
+        """Probe a single host for Bambu or FlashForge printer ports."""
+        ftp_open, mqtt_open, flashforge_open = await asyncio.gather(
+            self._check_port(ip, self.FTP_PORT, timeout),
+            self._check_port(ip, self.MQTT_PORT, timeout),
+            self._check_port(ip, self.FLASHFORGE_API_PORT, timeout),
+        )
+
+        if not (ftp_open and mqtt_open):
+            if flashforge_open:
+                logger.info("Found potential FlashForge Creator 5 Pro at %s", ip)
+                self._discovered[ip] = DiscoveredPrinter(
+                    serial=f"unknown-{ip.replace('.', '-')}",
+                    name=f"FlashForge at {ip}",
+                    ip_address=ip,
+                    model="FlashForge Creator 5 Pro",
+                    discovered_at=datetime.now(timezone.utc).isoformat(),
+                )
             return
 
-        # Also check MQTT port (8883) for confirmation
-        mqtt_open = await self._check_port(ip, self.MQTT_PORT, timeout)
-        if not mqtt_open:
-            return
-
-        # Both ports open - likely a Bambu printer
+        # Both Bambu ports open - likely a Bambu printer
         logger.info("Found potential Bambu printer at %s", ip)
 
         # Try to get printer info via SSDP unicast

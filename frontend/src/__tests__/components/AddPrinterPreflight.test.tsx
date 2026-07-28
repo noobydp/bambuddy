@@ -59,17 +59,24 @@ describe('AddPrinterModal pre-flight', () => {
   it('saves directly when all connection checks pass', async () => {
     const user = userEvent.setup();
     let created = false;
+    let diagnosticModel: string | undefined;
+    let diagnosticProvider: string | undefined;
+    let createdProvider: string | undefined;
     server.use(
-      http.post('/api/v1/printers/diagnostic', () =>
-        HttpResponse.json({
+      http.post('/api/v1/printers/diagnostic', async ({ request }) => {
+        const body = (await request.json()) as { model?: string; provider?: string };
+        diagnosticModel = body.model;
+        diagnosticProvider = body.provider;
+        return HttpResponse.json({
           printer_id: null,
           ip_address: '192.168.1.55',
           overall: 'ok',
           checks: [{ id: 'developer_mode', status: 'pass', params: {} }],
-        }),
-      ),
-      http.post('/api/v1/printers/', async () => {
+        });
+      }),
+      http.post('/api/v1/printers/', async ({ request }) => {
         created = true;
+        createdProvider = ((await request.json()) as { provider?: string }).provider;
         return HttpResponse.json({ id: 9, name: 'Test Printer' });
       }),
     );
@@ -81,6 +88,11 @@ describe('AddPrinterModal pre-flight', () => {
     await user.type(screen.getByPlaceholderText('192.168.1.100 or printer.local'), '192.168.1.55');
     await user.type(screen.getByPlaceholderText('01P00A000000000'), '01P00A000000000');
     await user.type(screen.getByPlaceholderText('From printer settings'), '12345678');
+    const providerSelect = screen.getByText('Printer Brand').parentElement!.querySelector('select')!;
+    await user.selectOptions(providerSelect, 'flashforge');
+    const modelSelect = screen.getByText('Model (optional)').parentElement!.querySelector('select')!;
+    expect(screen.getByRole('option', { name: 'Creator 5 Pro' })).toHaveValue('FlashForge Creator 5 Pro');
+    await user.selectOptions(modelSelect, 'FlashForge Creator 5 Pro');
 
     const submit = screen
       .getAllByRole('button', { name: /add printer/i })
@@ -88,6 +100,9 @@ describe('AddPrinterModal pre-flight', () => {
     await user.click(submit);
 
     await waitFor(() => expect(created).toBe(true));
+    expect(diagnosticModel).toBe('FlashForge Creator 5 Pro');
+    expect(diagnosticProvider).toBe('flashforge');
+    expect(createdProvider).toBe('flashforge');
     expect(screen.queryByText(/Some connection checks failed/i)).not.toBeInTheDocument();
   });
 });

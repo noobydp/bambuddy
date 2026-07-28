@@ -57,6 +57,18 @@ class TestPrintersAPI:
         assert len(data) >= 1
         assert any(p["name"] == "Test Printer" for p in data)
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_list_printer_providers(self, async_client: AsyncClient):
+        """Setup clients can discover provider-specific labels and models."""
+        response = await async_client.get("/api/v1/printers/providers")
+
+        assert response.status_code == 200
+        providers = {provider["key"]: provider for provider in response.json()}
+        assert providers["bambu"]["credential_label"] == "Access Code"
+        assert providers["flashforge"]["credential_label"] == "Device Key"
+        assert providers["flashforge"]["models"] == ["FlashForge Creator 5 Pro"]
+
     # ========================================================================
     # Create endpoints
     # ========================================================================
@@ -81,6 +93,32 @@ class TestPrintersAPI:
         assert result["name"] == "New Printer"
         assert result["serial_number"] == "00M09A111111111"
         assert result["model"] == "X1C"
+        assert result["provider"] == "bambu"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_create_flashforge_printer_persists_provider(
+        self,
+        async_client: AsyncClient,
+        _mock_printer_test_connection,
+    ):
+        """Provider choice is persisted and used by the connection probe."""
+        data = {
+            "name": "Creator 5 Pro",
+            "serial_number": "SN123",
+            "ip_address": "192.0.2.44",
+            "access_code": "device-key",
+            "provider": "flashforge",
+            "model": "FlashForge Creator 5 Pro",
+        }
+
+        response = await async_client.post("/api/v1/printers/", json=data)
+
+        assert response.status_code == 200
+        assert response.json()["provider"] == "flashforge"
+        _mock_printer_test_connection.assert_awaited_once()
+        assert _mock_printer_test_connection.await_args.kwargs["provider"] == "flashforge"
+
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -482,11 +520,48 @@ class TestPrintersAPI:
         """FlashForge cards should only advertise controls backed by the local API."""
         from backend.app.services.bambu_mqtt import PrinterState
 
-        printer = await printer_factory(model="Flashforge Creator 5 Pro")
+        printer = await printer_factory(provider="flashforge", model="Flashforge Creator 5 Pro")
         state = PrinterState(connected=True, state="RUNNING")
         state.current_print = "cow.gcode.3mf"
         state.gcode_file = "cow.gcode.3mf"
         state.subtask_name = "cow.gcode.3mf"
+        state.temperatures = {
+            "tool_0": 201,
+            "tool_0_target": 210,
+            "tool_1": 202,
+            "tool_1_target": 210,
+            "tool_2": 203,
+            "tool_2_target": 210,
+            "tool_3": 204,
+            "tool_3_target": 210,
+            "bed": 60,
+            "bed_target": 60,
+        }
+        state.raw_data["provider_snapshot"] = {
+            "version": 1,
+            "tools": [
+                {
+                    "id": f"tool_{index}",
+                    "index": index,
+                    "label": f"Tool {index + 1}",
+                    "temperature": 201 + index,
+                    "target_temperature": 210,
+                    "heating": True,
+                    "active": False,
+                    "nozzle_diameter": None,
+                    "filament_type": None,
+                }
+                for index in range(4)
+            ],
+            "heaters": [],
+            "fans": [],
+            "material_systems": [],
+            "device_info": {
+                "vendor": "FlashForge",
+                "model": "Creator 5 Pro",
+                "build_volume": "256X256X256",
+            },
+        }
 
         mock_pm = MagicMock()
         mock_pm.get_status.return_value = state
@@ -496,7 +571,11 @@ class TestPrintersAPI:
             response = await async_client.get(f"/api/v1/printers/{printer.id}/status")
 
         assert response.status_code == 200
-        capabilities = response.json()["capabilities"]
+        result = response.json()
+        assert result["provider"] == "flashforge"
+        assert [tool["temperature"] for tool in result["tools"]] == [201, 202, 203, 204]
+        assert result["device_info"]["build_volume"] == "256X256X256"
+        capabilities = result["capabilities"]
         assert capabilities["can_pause"] is True
         assert capabilities["can_resume"] is True
         assert capabilities["can_stop"] is True
@@ -510,6 +589,9 @@ class TestPrintersAPI:
         assert capabilities["can_skip_objects"] is False
         assert capabilities["can_download_files"] is False
         assert capabilities["can_delete_files"] is False
+        assert capabilities["can_update_firmware"] is False
+        assert capabilities["can_virtual_printer"] is False
+        assert capabilities["can_manage_material_system"] is False
         assert "known LAN API" in capabilities["unsupported_reasons"]["can_skip_objects"]
         assert "file listing/upload" in capabilities["unsupported_reasons"]["can_download_files"]
 

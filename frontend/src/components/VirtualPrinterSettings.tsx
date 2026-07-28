@@ -6,6 +6,7 @@ import { api, virtualPrinterApi } from '../api/client';
 import { Card, CardContent, CardHeader } from './Card';
 import { Button } from './Button';
 import { useToast } from '../contexts/ToastContext';
+import { isBambuPrinter } from '../utils/printer';
 
 type LocalMode = 'archive' | 'review' | 'queue' | 'proxy';
 
@@ -52,6 +53,7 @@ export function VirtualPrinterSettings() {
     queryKey: ['printers'],
     queryFn: api.getPrinters,
   });
+  const compatiblePrinters = printers?.filter(isBambuPrinter);
 
   // Fetch network interfaces for IP override (all modes when enabled)
   const { data: networkInterfaces } = useQuery({
@@ -349,7 +351,7 @@ export function VirtualPrinterSettings() {
                   className="w-full bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-md px-3 py-2 text-white appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed pr-10"
                 >
                   <option value="">{t('virtualPrinter.targetPrinter.placeholder')}</option>
-                  {printers?.map((printer) => (
+                  {compatiblePrinters?.map((printer) => (
                     <option key={printer.id} value={printer.id}>
                       {printer.name} ({printer.ip_address})
                     </option>

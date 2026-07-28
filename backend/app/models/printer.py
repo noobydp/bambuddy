@@ -14,6 +14,7 @@ class Printer(Base):
     serial_number: Mapped[str] = mapped_column(String(50), unique=True)
     ip_address: Mapped[str] = mapped_column(String(253))
     access_code: Mapped[str] = mapped_column(String(20))
+    provider: Mapped[str] = mapped_column(String(30), default="bambu")
     model: Mapped[str | None] = mapped_column(String(50))
     location: Mapped[str | None] = mapped_column(String(100))  # Group/location name
     nozzle_count: Mapped[int] = mapped_column(default=1)  # 1 or 2, auto-detected from MQTT

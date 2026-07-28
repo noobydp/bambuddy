@@ -6,6 +6,7 @@ import { api, multiVirtualPrinterApi } from '../api/client';
 import { Card, CardContent } from './Card';
 import { Button } from './Button';
 import { useToast } from '../contexts/ToastContext';
+import { isBambuPrinter } from '../utils/printer';
 
 type Mode = 'archive' | 'review' | 'queue' | 'proxy';
 
@@ -33,6 +34,7 @@ export function VirtualPrinterAddDialog({ onClose }: VirtualPrinterAddDialogProp
     queryKey: ['printers'],
     queryFn: api.getPrinters,
   });
+  const compatiblePrinters = printers?.filter(isBambuPrinter);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -118,7 +120,7 @@ export function VirtualPrinterAddDialog({ onClose }: VirtualPrinterAddDialogProp
                   className="w-full bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-md px-3 py-2 text-white text-sm appearance-none cursor-pointer pr-10"
                 >
                   <option value="">{t('virtualPrinter.targetPrinter.placeholder')}</option>
-                  {printers?.map((p) => (
+                  {compatiblePrinters?.map((p) => (
                     <option key={p.id} value={p.id}>{p.name} ({p.ip_address})</option>
                   ))}
                 </select>

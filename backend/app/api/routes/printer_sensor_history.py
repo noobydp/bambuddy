@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
@@ -15,7 +15,10 @@ from backend.app.models.user import User
 
 router = APIRouter(prefix="/printer-sensor-history", tags=["printer-sensor-history"])
 
-VALID_KINDS = {"nozzle", "nozzle_2", "bed", "chamber"}
+def _valid_kind(kind: str) -> bool:
+    return kind in {"nozzle", "nozzle_2", "bed", "chamber"} or (
+        kind.startswith("tool_") and kind.removeprefix("tool_").isdigit()
+    )
 
 
 class HeaterHistoryPoint(BaseModel):
@@ -43,7 +46,7 @@ async def get_printer_sensor_history(
     hours: int = Query(default=24, ge=1, le=168, description="Hours of history (1-168)"),
     kinds: str | None = Query(
         default=None,
-        description="Comma-separated list of sensor kinds (nozzle, nozzle_2, bed, chamber). All by default.",
+        description="Comma-separated sensor kinds (for example nozzle, bed, chamber, or tool_0). All by default.",
     ),
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTER_SENSOR_HISTORY_READ),
@@ -53,9 +56,20 @@ async def get_printer_sensor_history(
 
     if kinds:
         requested = {k.strip() for k in kinds.split(",") if k.strip()}
-        kinds_to_fetch = sorted(requested & VALID_KINDS)
+        kinds_to_fetch = sorted(k for k in requested if _valid_kind(k))
     else:
-        kinds_to_fetch = sorted(VALID_KINDS)
+        kind_result = await db.execute(
+            select(distinct(PrinterSensorHistory.sensor_kind)).where(
+                and_(
+                    PrinterSensorHistory.printer_id == printer_id,
+                    PrinterSensorHistory.recorded_at >= since,
+                )
+            )
+        )
+        kinds_to_fetch = sorted(
+            {"bed", "chamber", "nozzle", "nozzle_2"}
+            | {kind for kind in kind_result.scalars().all() if kind and _valid_kind(kind)}
+        )
 
     series_out: list[HeaterSeries] = []
     for kind in kinds_to_fetch:

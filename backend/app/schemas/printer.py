@@ -29,6 +29,7 @@ class PrinterBase(BaseModel):
         max_length=253,
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
+    provider: str | None = None
     model: str | None = None
     location: str | None = None  # Group/location name
     auto_archive: bool = True
@@ -63,6 +64,7 @@ class PrinterUpdate(BaseModel):
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
     access_code: str | None = None
+    provider: str | None = None
     model: str | None = None
     location: str | None = None
     is_active: bool | None = None
@@ -103,6 +105,7 @@ class PrinterResponse(PrinterBase):
             "name": printer.name,
             "serial_number": printer.serial_number,
             "ip_address": printer.ip_address,
+            "provider": printer.provider,
             "model": printer.model,
             "location": printer.location,
             "auto_archive": printer.auto_archive,
@@ -172,7 +175,9 @@ class AMSTray(BaseModel):
     tray_sub_brands: str | None = None  # Full name like "PLA Basic", "PETG HF"
     tray_id_name: str | None = None  # Bambu filament ID like "A00-Y2" (can decode to color)
     tray_info_idx: str | None = None  # Filament preset ID like "GFA00"
-    remain: int = 0
+    # Percentage remaining when measured; -1 means the provider only reports
+    # occupancy/material identity (for example FlashForge IFS).
+    remain: int = -1
     k: float | None = None  # Pressure advance value (from tray or K-profile lookup)
     cali_idx: int | None = None  # Calibration index for K-profile lookup
     tag_uid: str | None = None  # RFID tag UID (any tag)
@@ -285,32 +290,102 @@ class PrintOptionsResponse(BaseModel):
 
 
 class PrinterCapabilities(BaseModel):
-    can_pause: bool = True
-    can_resume: bool = True
-    can_stop: bool = True
-    can_clear_errors: bool = True
-    can_chamber_light: bool = True
-    can_print_speed: bool = True
+    """Verified operations for this provider.
+
+    Defaults fail closed so a newly-added provider cannot accidentally inherit
+    Bambu controls just because a caller forgot to override a field.
+    """
+
+    can_pause: bool = False
+    can_resume: bool = False
+    can_stop: bool = False
+    can_clear_errors: bool = False
+    can_chamber_light: bool = False
+    can_print_speed: bool = False
     can_set_temperature: bool = False
-    can_airduct_mode: bool = True
-    can_bed_jog: bool = True
-    can_home_axes: bool = True
-    can_skip_objects: bool = True
-    can_dry_filament: bool = True
-    can_calibrate: bool = True
-    can_upload_files: bool = True
-    can_list_files: bool = True
-    can_download_files: bool = True
-    can_delete_files: bool = True
-    can_preview_files: bool = True
-    can_browse_files: bool = True
-    can_stream_camera: bool = True
+    can_airduct_mode: bool = False
+    can_bed_jog: bool = False
+    can_home_axes: bool = False
+    can_skip_objects: bool = False
+    can_dry_filament: bool = False
+    can_calibrate: bool = False
+    can_upload_files: bool = False
+    can_list_files: bool = False
+    can_download_files: bool = False
+    can_delete_files: bool = False
+    can_preview_files: bool = False
+    can_browse_files: bool = False
+    can_stream_camera: bool = False
+    can_update_firmware: bool = False
+    can_virtual_printer: bool = False
+    can_manage_material_system: bool = False
     unsupported_reasons: dict[str, str] = Field(default_factory=dict)
+
+
+class PrinterToolStatus(BaseModel):
+    id: str
+    index: int
+    label: str
+    temperature: float | None = None
+    target_temperature: float | None = None
+    heating: bool = False
+    active: bool | None = None
+    nozzle_diameter: str | None = None
+    filament_type: str | None = None
+
+
+class PrinterHeaterStatus(BaseModel):
+    id: str
+    label: str
+    temperature: float | None = None
+    target_temperature: float | None = None
+    heating: bool = False
+    controllable: bool = False
+
+
+class PrinterFanStatus(BaseModel):
+    id: str
+    label: str
+    speed_percent: int | None = None
+    active: bool | None = None
+    controllable: bool = False
+
+
+class MaterialSlotStatus(BaseModel):
+    id: int
+    label: str
+    occupied: bool | None = None
+    active: bool = False
+    material_type: str | None = None
+    color: str | None = None
+    remaining_percent: int | None = None
+
+
+class MaterialSystemStatus(BaseModel):
+    id: str
+    name: str
+    kind: str
+    slots: list[MaterialSlotStatus] = Field(default_factory=list)
+
+
+class PrinterDeviceInfo(BaseModel):
+    vendor: str
+    model: str | None = None
+    build_volume: str | None = None
+    firmware_version: str | None = None
+    cumulative_print_time: float | None = None
+    cumulative_filament: float | None = None
+    tvoc: float | None = None
+    lidar: bool | None = None
+    auto_shutdown: bool | None = None
+    auto_shutdown_minutes: int | None = None
+    remaining_disk_gb: float | None = None
 
 
 class PrinterStatus(BaseModel):
     id: int
     name: str
+    provider: str = "bambu"
     connected: bool
     state: str | None = None
     current_print: str | None = None
@@ -408,6 +483,14 @@ class PrinterStatus(BaseModel):
     # Active chamber heater (responds to M141). True only for H2C/H2D/H2DPro/H2S/X2D.
     supports_chamber_heater: bool = False
     capabilities: PrinterCapabilities = Field(default_factory=PrinterCapabilities)
+    # Provider-neutral, versioned component snapshot. Existing Bambu-shaped
+    # fields remain above for backwards compatibility while the UI migrates.
+    snapshot_version: int = 1
+    tools: list[PrinterToolStatus] = Field(default_factory=list)
+    heaters: list[PrinterHeaterStatus] = Field(default_factory=list)
+    fans: list[PrinterFanStatus] = Field(default_factory=list)
+    material_systems: list[MaterialSystemStatus] = Field(default_factory=list)
+    device_info: PrinterDeviceInfo | None = None
     # Linked archive for the active print (resolved via subtask_id). Frontend uses
     # this to fetch plate metadata and show the plate name when the source 3MF is
     # multi-plate (#881 follow-up).
@@ -444,11 +527,13 @@ class PrinterDiagnosticResult(BaseModel):
 class DiagnosticRequest(BaseModel):
     """Pre-save (Add Printer) connection diagnostic request.
 
-    serial_number + access_code are optional: when both are present the
-    diagnostic also probes MQTT credentials, otherwise only the
-    network-level checks run.
+    ``model`` selects the printer-family-specific diagnostic. Serial number
+    and access code are optional: when both are present the diagnostic also
+    probes credentials, otherwise only the network-level checks run.
     """
 
     ip_address: str
     serial_number: str | None = None
     access_code: str | None = None
+    provider: str | None = None
+    model: str | None = None

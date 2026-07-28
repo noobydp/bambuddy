@@ -491,6 +491,7 @@ describe('PrintersPage', () => {
               ...mockPrinters[0],
               id: 5,
               name: 'Creator 5 Pro',
+              provider: 'flashforge',
               model: 'Flashforge Creator 5 Pro',
             },
           ]);
@@ -506,6 +507,14 @@ describe('PrintersPage', () => {
               nozzle: 209,
               nozzle_target: 210,
               nozzle_heating: false,
+              tool_0: 201,
+              tool_0_target: 210,
+              tool_1: 202,
+              tool_1_target: 210,
+              tool_2: 203,
+              tool_2_target: 210,
+              tool_3: 204,
+              tool_3_target: 210,
               bed: 60,
               bed_target: 60,
               bed_heating: false,
@@ -514,6 +523,23 @@ describe('PrintersPage', () => {
               chamber_heating: false,
             },
             printable_objects_count: 2,
+            provider: 'flashforge',
+            tools: [
+              { id: 'tool_0', index: 0, label: 'Tool 1', temperature: 201, target_temperature: 210 },
+              { id: 'tool_1', index: 1, label: 'Tool 2', temperature: 202, target_temperature: 210 },
+              { id: 'tool_2', index: 2, label: 'Tool 3', temperature: 203, target_temperature: 210 },
+              { id: 'tool_3', index: 3, label: 'Tool 4', temperature: 204, target_temperature: 210 },
+            ],
+            device_info: {
+              vendor: 'FlashForge',
+              model: 'Creator 5 Pro',
+              build_volume: '256X256X256',
+              remaining_disk_gb: 4.4,
+              lidar: true,
+              tvoc: 12,
+              auto_shutdown: true,
+              auto_shutdown_minutes: 30,
+            },
             ams: [
               {
                 id: 0,
@@ -547,6 +573,9 @@ describe('PrintersPage', () => {
               can_preview_files: false,
               can_browse_files: false,
               can_stream_camera: true,
+              can_update_firmware: false,
+              can_virtual_printer: false,
+              can_manage_material_system: false,
             },
           });
         })
@@ -568,6 +597,8 @@ describe('PrintersPage', () => {
       expect(screen.getByTitle(/chamber light/i)).toBeInTheDocument();
       expect(screen.getByTitle(/speed/i)).toBeInTheDocument();
       expect(screen.getByTitle(/set nozzle temperature/i)).toBeInTheDocument();
+      expect(screen.getByText('T1 201°')).toBeInTheDocument();
+      expect(screen.getByText('T4 204°')).toBeInTheDocument();
       expect(screen.queryByTitle(/skip/i)).not.toBeInTheDocument();
     });
 

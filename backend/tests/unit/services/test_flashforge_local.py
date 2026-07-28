@@ -163,7 +163,11 @@ def test_apply_detail_maps_creator_5_pro_status():
     assert client.state.total_layers == 100
     assert client.state.firmware_version == "1.9.3"
     assert client.state.ipcam is True
-    assert client.state.temperatures == {
+    assert {
+        key: value
+        for key, value in client.state.temperatures.items()
+        if not key.startswith("tool_")
+    } == {
         "nozzle": 209,
         "nozzle_target": 210,
         "nozzle_heating": False,
@@ -174,6 +178,12 @@ def test_apply_detail_maps_creator_5_pro_status():
         "chamber_target": 45,
         "chamber_heating": True,
     }
+    assert [client.state.temperatures[f"tool_{index}"] for index in range(4)] == [120, 121, 180, 209]
+    assert client.state.raw_data["tool_count"] == 4
+    snapshot = client.state.raw_data["provider_snapshot"]
+    assert [tool["label"] for tool in snapshot["tools"]] == ["Tool 1", "Tool 2", "Tool 3", "Tool 4"]
+    assert snapshot["material_systems"][0]["kind"] == "flashforge_ifs"
+    assert snapshot["material_systems"][0]["slots"][0]["remaining_percent"] is None
     assert client.state.cooling_fan_speed == 70
     assert client.state.speed_level == 3
     assert client.state.chamber_light is True

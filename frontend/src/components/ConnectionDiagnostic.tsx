@@ -123,6 +123,8 @@ type Connection = {
   ip_address: string;
   serial_number?: string;
   access_code?: string;
+  provider?: 'bambu' | 'flashforge';
+  model?: string;
 };
 
 // Keep in sync with backend `PUBLISH_WAIT_DEFAULT` in

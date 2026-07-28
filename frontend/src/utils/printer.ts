@@ -21,6 +21,15 @@ export function getPrinterImage(model: string | null | undefined): string {
   return '/img/printers/default.png';
 }
 
+export function isBambuPrinter(
+  printer: { provider?: string | null; model?: string | null },
+): boolean {
+  const provider =
+    printer.provider ??
+    (printer.model?.toLowerCase().includes('creator 5 pro') ? 'flashforge' : 'bambu');
+  return provider === 'bambu';
+}
+
 // G-code interchange families (#2578). Mirrors backend GCODE_COMPAT_FAMILIES
 // in backend/app/utils/printer_models.py — keep the two in sync. A sliced 3MF
 // may target a different model ONLY within its family; everything else is

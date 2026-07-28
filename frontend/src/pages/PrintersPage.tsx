@@ -1919,27 +1919,35 @@ function PrinterCard({
     queryFn: () => api.getPrinterStatus(printer.id),
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
   });
+  const fallbackProvider =
+    status?.provider ??
+    printer.provider ??
+    (printer.model?.toLowerCase().includes('creator 5 pro') ? 'flashforge' : 'bambu');
+  const legacyBambuCapabilities = fallbackProvider === 'bambu';
   const capabilities = status?.capabilities ?? {
-    can_pause: true,
-    can_resume: true,
-    can_stop: true,
-    can_clear_errors: true,
-    can_chamber_light: true,
-    can_print_speed: true,
+    can_pause: legacyBambuCapabilities,
+    can_resume: legacyBambuCapabilities,
+    can_stop: legacyBambuCapabilities,
+    can_clear_errors: legacyBambuCapabilities,
+    can_chamber_light: legacyBambuCapabilities,
+    can_print_speed: legacyBambuCapabilities,
     can_set_temperature: false,
-    can_airduct_mode: true,
-    can_bed_jog: true,
-    can_home_axes: true,
-    can_skip_objects: true,
-    can_dry_filament: true,
-    can_calibrate: true,
-    can_upload_files: true,
-    can_list_files: true,
-    can_download_files: true,
-    can_delete_files: true,
-    can_preview_files: true,
-    can_browse_files: true,
-    can_stream_camera: true,
+    can_airduct_mode: legacyBambuCapabilities,
+    can_bed_jog: legacyBambuCapabilities,
+    can_home_axes: legacyBambuCapabilities,
+    can_skip_objects: legacyBambuCapabilities,
+    can_dry_filament: legacyBambuCapabilities,
+    can_calibrate: legacyBambuCapabilities,
+    can_upload_files: legacyBambuCapabilities,
+    can_list_files: legacyBambuCapabilities,
+    can_download_files: legacyBambuCapabilities,
+    can_delete_files: legacyBambuCapabilities,
+    can_preview_files: legacyBambuCapabilities,
+    can_browse_files: legacyBambuCapabilities,
+    can_stream_camera: legacyBambuCapabilities,
+    can_update_firmware: legacyBambuCapabilities,
+    can_virtual_printer: legacyBambuCapabilities,
+    can_manage_material_system: legacyBambuCapabilities,
   };
 
   // Check for firmware updates (cached for 5 minutes, can be disabled in settings)
@@ -1948,7 +1956,7 @@ function PrinterCard({
     queryFn: () => firmwareApi.checkPrinterUpdate(printer.id),
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
-    enabled: checkPrinterFirmware && hasPermission('firmware:read'),
+    enabled: checkPrinterFirmware && capabilities.can_update_firmware === true && hasPermission('firmware:read'),
   });
 
   // Collect unique tray_info_idx values for cloud filament info lookup
@@ -3522,7 +3530,10 @@ function PrinterCard({
 
               {/* Enclosure Door Badge — models with an actual door sensor.
                   P1S has an enclosure door but no sensor; P1P has no enclosure at all. */}
-              {status?.connected && ['X1C', 'X1', 'X1E', 'X2D', 'P2S', 'H2D', 'H2D Pro', 'H2C', 'H2S'].includes(printer.model ?? '') && (
+              {status?.connected && (
+                fallbackProvider === 'flashforge' ||
+                ['X1C', 'X1', 'X1E', 'X2D', 'P2S', 'H2D', 'H2D Pro', 'H2C', 'H2S'].includes(printer.model ?? '')
+              ) && (
                 <span
                   className={`flex items-center px-2 py-1 rounded-full text-xs ${
                     status.door_open
@@ -3809,11 +3820,21 @@ function PrinterCard({
             {/* Temperatures */}
             {status.temperatures && viewMode === 'expanded' && (() => {
               // Use actual heater states from MQTT stream
-              const nozzleHeating = status.temperatures.nozzle_heating || status.temperatures.nozzle_2_heating || false;
+              const providerTools = status.tools ?? [];
+              const hasDynamicToolGrid = providerTools.length > 2;
+              const nozzleHeating = providerTools.length > 0
+                ? providerTools.some(tool => tool.heating)
+                : status.temperatures.nozzle_heating || status.temperatures.nozzle_2_heating || false;
               const bedHeating = status.temperatures.bed_heating || false;
               const chamberHeating = status.temperatures.chamber_heating || false;
               const isDualNozzle = printer.nozzle_count === 2 || status.temperatures.nozzle_2 !== undefined;
               const availableHeaterKinds: HeaterSensorKind[] = (() => {
+                if (hasDynamicToolGrid) {
+                  const kinds = providerTools.map(tool => tool.id);
+                  kinds.push('bed');
+                  if (status.temperatures.chamber !== undefined) kinds.push('chamber');
+                  return kinds;
+                }
                 const kinds: HeaterSensorKind[] = ['nozzle'];
                 if (status.temperatures.nozzle_2 !== undefined) kinds.push('nozzle_2');
                 kinds.push('bed');
@@ -3882,13 +3903,31 @@ function PrinterCard({
                         title={t('printers.heaterHistory.openLabel', 'View heater history')}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setHeaterHistoryModal({ initialKind: 'nozzle', availableKinds: availableHeaterKinds });
+                          setHeaterHistoryModal({
+                            initialKind: hasDynamicToolGrid ? providerTools[0].id : 'nozzle',
+                            availableKinds: availableHeaterKinds,
+                          });
                         }}
                       >
                         <LineChartIcon className="w-2.5 h-2.5" />
                       </button>
                       <HeaterThermometer className="w-3.5 h-3.5 mb-0.5" color="text-orange-400" isHeating={nozzleHeating} />
-                      {status.temperatures.nozzle_2 !== undefined ? (
+                      {hasDynamicToolGrid ? (
+                        <div className="w-full">
+                          <p className="text-[9px] text-bambu-gray">{t('printers.tools', 'Tools')}</p>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+                            {providerTools.map(tool => (
+                              <span
+                                key={tool.id}
+                                className={`text-[10px] ${tool.heating ? 'text-orange-400' : 'text-white'}`}
+                                title={`${tool.label}${tool.nozzle_diameter ? ` · ${tool.nozzle_diameter}` : ''}`}
+                              >
+                                T{tool.index + 1} {tool.temperature != null ? Math.round(tool.temperature) : '—'}°
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : status.temperatures.nozzle_2 !== undefined ? (
                         <>
                           <p className="text-[9px] text-bambu-gray">L / R</p>
                           <p className="text-[11px] text-white">
@@ -4122,6 +4161,61 @@ function PrinterCard({
                 </>
               );
             })()}
+
+            {viewMode === 'expanded' && fallbackProvider === 'flashforge' && status.device_info && (
+              <div className="mt-2 rounded-lg bg-bambu-dark p-2">
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-bambu-gray">
+                    {t('printers.flashforge.deviceStatus', 'Creator 5 Pro')}
+                  </span>
+                  <div className="h-[2px] flex-1 bg-bambu-dark-tertiary" />
+                </div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] sm:grid-cols-4">
+                  {status.device_info.build_volume && (
+                    <span className="flex items-center gap-1 text-bambu-gray">
+                      <Box className="h-3 w-3" />
+                      <span className="text-white">{status.device_info.build_volume.replaceAll('X', ' × ')} mm</span>
+                    </span>
+                  )}
+                  {status.device_info.remaining_disk_gb != null && (
+                    <span className="flex items-center gap-1 text-bambu-gray">
+                      <HardDrive className="h-3 w-3" />
+                      <span className="text-white">{status.device_info.remaining_disk_gb.toFixed(1)} GB free</span>
+                    </span>
+                  )}
+                  {status.device_info.lidar != null && (
+                    <span className="flex items-center gap-1 text-bambu-gray">
+                      <ScanSearch className="h-3 w-3" />
+                      <span className="text-white">
+                        {status.device_info.lidar ? t('printers.flashforge.lidarOn', 'LiDAR available') : t('printers.flashforge.lidarOff', 'LiDAR unavailable')}
+                      </span>
+                    </span>
+                  )}
+                  {status.device_info.tvoc != null && (
+                    <span className="flex items-center gap-1 text-bambu-gray">
+                      <Gauge className="h-3 w-3" />
+                      <span className="text-white">TVOC {status.device_info.tvoc}</span>
+                    </span>
+                  )}
+                  {status.device_info.auto_shutdown != null && (
+                    <span className="flex items-center gap-1 text-bambu-gray">
+                      <Power className="h-3 w-3" />
+                      <span className="text-white">
+                        {status.device_info.auto_shutdown
+                          ? t('printers.flashforge.autoShutdownOn', 'Auto shutdown on')
+                          : t('printers.flashforge.autoShutdownOff', 'Auto shutdown off')}
+                      </span>
+                    </span>
+                  )}
+                  {(status.fans ?? []).filter(fan => fan.id === 'internal' || fan.id === 'external').map(fan => (
+                    <span key={fan.id} className="flex items-center gap-1 text-bambu-gray">
+                      <Fan className={`h-3 w-3 ${fan.active ? 'text-cyan-400' : ''}`} />
+                      <span className="text-white">{fan.label}: {fan.active ? t('common.on', 'On') : t('common.off', 'Off')}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {viewMode === 'expanded' && showClearPlateButton && (
               <button
@@ -4722,7 +4816,7 @@ function PrinterCard({
                                 // Find tray data for this slot (may be undefined if data incomplete)
                                 // Use array index if available, as tray.id may not always be set
                                 const tray = ams.tray[slotIdx] || ams.tray.find(t => t.id === slotIdx);
-                                const hasFillLevel = tray?.tray_type && tray.remain >= 0;
+                                const hasFillLevel = !!tray?.tray_type && tray.remain != null && tray.remain >= 0;
                                 const isEmpty = !tray?.tray_type;
                                 const emptyKind = getEmptySlotKind(tray);
                                 // Check if this is the currently loaded tray
@@ -4762,7 +4856,7 @@ function PrinterCard({
                                 })();
                                 // If inventory says 0% but AMS reports positive remain, prefer AMS
                                 // (inventory weight_used may be stale or over-counted — #676)
-                                const resolvedInventoryFill = (inventoryFill === 0 && hasFillLevel && tray.remain > 0)
+                                const resolvedInventoryFill = (inventoryFill === 0 && hasFillLevel && (tray.remain ?? 0) > 0)
                                   ? null : inventoryFill;
                                 const effectiveFill = spoolmanFill ?? slotSpoolFill ?? resolvedInventoryFill ?? (hasFillLevel ? tray.remain : null);
                                 const fillSource = (spoolmanFill !== null || slotSpoolFill !== null) ? 'spoolman' as const
@@ -5025,7 +5119,7 @@ function PrinterCard({
                       const isLeftNozzle = extruderId === 1;
                       const isRightNozzle = extruderId === 0;
                       const tray = ams.tray[0];
-                      const hasFillLevel = tray?.tray_type && tray.remain >= 0;
+                      const hasFillLevel = !!tray?.tray_type && tray.remain != null && tray.remain >= 0;
                       const isEmpty = !tray?.tray_type;
                       const emptyKind = getEmptySlotKind(tray);
                       // Check if this is the currently loaded tray
@@ -5053,7 +5147,7 @@ function PrinterCard({
                           return null;
                         })();
                         // If inventory says 0% but AMS reports positive remain, prefer AMS (#676)
-                        const htResolvedInventoryFill = (htInventoryFill === 0 && hasFillLevel && tray.remain > 0)
+                        const htResolvedInventoryFill = (htInventoryFill === 0 && hasFillLevel && (tray.remain ?? 0) > 0)
                           ? null : htInventoryFill;
                         // Slot-assigned-only fill (when spool has no NFC tag but is slot-assigned)
                         const htSlotAssignmentForFill = spoolmanEnabled && !spoolmanLoading
@@ -5460,9 +5554,9 @@ function PrinterCard({
                                 }
                                 return null;
                               })();
-                              const extHasFillLevel = extTray.tray_type && extTray.remain >= 0;
+                              const extHasFillLevel = !!extTray.tray_type && extTray.remain != null && extTray.remain >= 0;
                               // If inventory says 0% but AMS reports positive remain, prefer AMS (#676)
-                              const extResolvedInventoryFill = (extInventoryFill === 0 && extHasFillLevel && extTray.remain > 0)
+                              const extResolvedInventoryFill = (extInventoryFill === 0 && extHasFillLevel && (extTray.remain ?? 0) > 0)
                                 ? null : extInventoryFill;
                               // Slot-assigned-only fill (when spool has no NFC tag but is slot-assigned)
                               const extSlotAssignmentForFill = spoolmanEnabled && !spoolmanLoading
@@ -6633,6 +6727,7 @@ export function AddPrinterModal({
     serial_number: '',
     ip_address: '',
     access_code: '',
+    provider: 'bambu',
     model: '',
     location: '',
     auto_archive: true,
@@ -6694,6 +6789,8 @@ export function AddPrinterModal({
         ip_address: form.ip_address.trim(),
         serial_number: form.serial_number.trim() || undefined,
         access_code: form.access_code || undefined,
+        provider: form.provider,
+        model: form.model || undefined,
       });
       if (result.checks.some((c) => c.status === 'fail')) {
         setSaveWarning(result);
@@ -6802,9 +6899,11 @@ export function AddPrinterModal({
       serial_number: serialNumber,
       ip_address: printer.ip_address,
       model: mapModelCode(printer.model),
+      provider: mapModelCode(printer.model).toLowerCase().includes('creator 5 pro') ? 'flashforge' : 'bambu',
     });
     // Clear discovery results after selection
     setDiscovered([]);
+    setHasScanned(false);
   };
 
   // Cleanup discovery on unmount
@@ -7008,6 +7107,24 @@ export function AddPrinterModal({
               />
             </div>
             <div>
+              <label className="block text-sm text-bambu-gray mb-1">{t('printers.provider', 'Printer Brand')}</label>
+              <select
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                value={form.provider || 'bambu'}
+                onChange={(e) => {
+                  const provider = e.target.value as 'bambu' | 'flashforge';
+                  setForm({
+                    ...form,
+                    provider,
+                    model: provider === 'flashforge' ? 'FlashForge Creator 5 Pro' : '',
+                  });
+                }}
+              >
+                <option value="bambu">Bambu Lab</option>
+                <option value="flashforge">FlashForge</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
               <select
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -7015,6 +7132,12 @@ export function AddPrinterModal({
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
+                {form.provider === 'flashforge' ? (
+                  <optgroup label="FlashForge">
+                    <option value="FlashForge Creator 5 Pro">Creator 5 Pro</option>
+                  </optgroup>
+                ) : (
+                  <>
                 <optgroup label="A1 Series">
                   <option value="A1">A1</option>
                   <option value="A1 Mini">A1 Mini</option>
@@ -7041,6 +7164,8 @@ export function AddPrinterModal({
                 <optgroup label="X2 Series">
                   <option value="X2D">X2D</option>
                 </optgroup>
+                  </>
+                )}
               </select>
             </div>
             <div>
@@ -7116,6 +7241,8 @@ export function AddPrinterModal({
           ip_address: form.ip_address.trim(),
           serial_number: form.serial_number.trim() || undefined,
           access_code: form.access_code || undefined,
+          provider: form.provider,
+          model: form.model || undefined,
         }}
         printerName={form.name || null}
         onClose={() => setShowDiagnostic(false)}
@@ -7419,6 +7546,7 @@ function EditPrinterModal({
     name: printer.name,
     ip_address: printer.ip_address,
     access_code: '',
+    provider: printer.provider || (printer.model?.toLowerCase().includes('creator 5 pro') ? 'flashforge' : 'bambu'),
     model: printer.model || '',
     location: printer.location || '',
     auto_archive: printer.auto_archive,
@@ -7453,6 +7581,7 @@ function EditPrinterModal({
     const data: Partial<PrinterCreate> = {
       name: form.name,
       ip_address: form.ip_address,
+      provider: form.provider,
       model: form.model || undefined,
       location: form.location || undefined,
       auto_archive: form.auto_archive,
@@ -7473,6 +7602,8 @@ function EditPrinterModal({
         ip_address: form.ip_address.trim(),
         serial_number: printer.serial_number,
         access_code: form.access_code || undefined,
+        provider: form.provider,
+        model: form.model || undefined,
       });
       if (result.checks.some((c) => c.status === 'fail')) {
         setSaveWarning(result);
@@ -7539,6 +7670,24 @@ function EditPrinterModal({
               />
             </div>
             <div>
+              <label className="block text-sm text-bambu-gray mb-1">{t('printers.provider', 'Printer Brand')}</label>
+              <select
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                value={form.provider}
+                onChange={(e) => {
+                  const provider = e.target.value as 'bambu' | 'flashforge';
+                  setForm({
+                    ...form,
+                    provider,
+                    model: provider === 'flashforge' ? 'FlashForge Creator 5 Pro' : '',
+                  });
+                }}
+              >
+                <option value="bambu">Bambu Lab</option>
+                <option value="flashforge">FlashForge</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
               <select
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -7546,6 +7695,12 @@ function EditPrinterModal({
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
+                {form.provider === 'flashforge' ? (
+                  <optgroup label="FlashForge">
+                    <option value="FlashForge Creator 5 Pro">Creator 5 Pro</option>
+                  </optgroup>
+                ) : (
+                  <>
                 <optgroup label="A1 Series">
                   <option value="A1">A1</option>
                   <option value="A1 Mini">A1 Mini</option>
@@ -7572,6 +7727,8 @@ function EditPrinterModal({
                 <optgroup label="X2 Series">
                   <option value="X2D">X2D</option>
                 </optgroup>
+                  </>
+                )}
               </select>
             </div>
             <div>

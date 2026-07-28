@@ -55,7 +55,6 @@ from backend.app.services.bambu_ftp import (
 from backend.app.services.flashforge_local import (
     get_flashforge_current_thumbnail,
     get_flashforge_gcode_thumbnail,
-    is_flashforge_model,
 )
 from backend.app.services.printer_diagnostic import run_connection_diagnostic
 from backend.app.services.printer_manager import (
@@ -69,6 +68,13 @@ from backend.app.services.printer_manager import (
     supports_drying,
     supports_drying_while_printing,
 )
+from backend.app.services.printer_providers import (
+    PROVIDER_FLASHFORGE,
+    normalize_printer_provider,
+    provider_descriptors,
+    provider_for_printer,
+)
+from backend.app.services.printer_snapshot import build_printer_snapshot
 from backend.app.utils.filament_ids import filament_id_to_setting_id
 from backend.app.utils.http import build_content_disposition
 
@@ -110,11 +116,20 @@ def _serialize_printer(printer: Printer, *, include_secret: bool):
     return PrinterResponse.model_validate(printer)
 
 
-def _printer_capabilities(model: str | None) -> PrinterCapabilities:
-    if is_flashforge_model(model):
+def _is_flashforge_printer(printer: Printer) -> bool:
+    return provider_for_printer(printer) == PROVIDER_FLASHFORGE
+
+
+def _printer_capabilities(provider: str | None, model: str | None) -> PrinterCapabilities:
+    provider = normalize_printer_provider(provider, model)
+    if provider == PROVIDER_FLASHFORGE:
         local_api_gap = "FlashForge's known LAN API does not expose this Bambu control."
         file_gap = "FlashForge's known LAN API exposes file listing/upload, but not direct file download, delete, preview, or directory browsing."
         return PrinterCapabilities(
+            can_pause=True,
+            can_resume=True,
+            can_stop=True,
+            can_clear_errors=True,
             can_chamber_light=True,
             can_print_speed=True,
             can_set_temperature=True,
@@ -124,10 +139,16 @@ def _printer_capabilities(model: str | None) -> PrinterCapabilities:
             can_skip_objects=False,
             can_dry_filament=False,
             can_calibrate=False,
+            can_upload_files=True,
+            can_list_files=True,
             can_download_files=False,
             can_delete_files=False,
             can_preview_files=False,
             can_browse_files=False,
+            can_stream_camera=True,
+            can_update_firmware=False,
+            can_virtual_printer=False,
+            can_manage_material_system=False,
             unsupported_reasons={
                 "can_airduct_mode": local_api_gap,
                 "can_bed_jog": local_api_gap,
@@ -139,9 +160,36 @@ def _printer_capabilities(model: str | None) -> PrinterCapabilities:
                 "can_delete_files": file_gap,
                 "can_preview_files": file_gap,
                 "can_browse_files": file_gap,
+                "can_update_firmware": "FlashForge firmware is managed by the printer; Bambuddy's updater only supports Bambu firmware packages.",
+                "can_virtual_printer": "Bambuddy's Virtual Printer emulates the Bambu LAN protocol.",
+                "can_manage_material_system": "The Creator 5 Pro API reports IFS slots but does not expose verified remote load/unload commands.",
             },
         )
-    return PrinterCapabilities()
+    return PrinterCapabilities(
+        can_pause=True,
+        can_resume=True,
+        can_stop=True,
+        can_clear_errors=True,
+        can_chamber_light=True,
+        can_print_speed=True,
+        can_set_temperature=False,
+        can_airduct_mode=True,
+        can_bed_jog=True,
+        can_home_axes=True,
+        can_skip_objects=True,
+        can_dry_filament=True,
+        can_calibrate=True,
+        can_upload_files=True,
+        can_list_files=True,
+        can_download_files=True,
+        can_delete_files=True,
+        can_preview_files=True,
+        can_browse_files=True,
+        can_stream_camera=True,
+        can_update_firmware=True,
+        can_virtual_printer=True,
+        can_manage_material_system=True,
+    )
 
 
 @router.get("/")
@@ -159,6 +207,14 @@ async def list_printers(
     printers = list(result.scalars().all())
     include_secret = await _caller_can_view_printer_secrets(user, db)
     return [_serialize_printer(p, include_secret=include_secret) for p in printers]
+
+
+@router.get("/providers")
+async def list_printer_providers(
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
+):
+    """Return provider-aware setup metadata for the add/edit printer UI."""
+    return provider_descriptors()
 
 
 @router.post("/", response_model=PrinterResponse)
@@ -180,11 +236,17 @@ async def create_printer(
     if result.scalar_one_or_none():
         raise HTTPException(400, "Printer with this serial number already exists")
 
+    try:
+        provider = normalize_printer_provider(printer_data.provider, printer_data.model)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
     test_result = await printer_manager.test_connection(
         ip_address=printer_data.ip_address,
         serial_number=printer_data.serial_number,
         access_code=printer_data.access_code,
         model=printer_data.model,
+        provider=provider,
     )
     if not test_result.get("success"):
         # The frontend renders the user-facing message via i18n on `code`;
@@ -201,7 +263,7 @@ async def create_printer(
             },
         )
 
-    printer = Printer(**printer_data.model_dump())
+    printer = Printer(**printer_data.model_dump(exclude={"provider"}), provider=provider)
     db.add(printer)
     await db.commit()
     await db.refresh(printer)
@@ -393,6 +455,14 @@ async def update_printer(
         raise HTTPException(404, "Printer not found")
 
     update_data = printer_data.model_dump(exclude_unset=True)
+    if "provider" in update_data or "model" in update_data:
+        try:
+            update_data["provider"] = normalize_printer_provider(
+                update_data.get("provider", getattr(printer, "provider", None)),
+                update_data.get("model", printer.model),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     # Handle nested ROI object - flatten to individual columns
     if "plate_detection_roi" in update_data:
@@ -416,7 +486,7 @@ async def update_printer(
     await db.refresh(printer)
 
     # Reconnect if connection settings changed
-    if any(k in update_data for k in ["ip_address", "access_code", "is_active"]):
+    if any(k in update_data for k in ["ip_address", "access_code", "provider", "model", "is_active"]):
         printer_manager.disconnect_printer(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)
@@ -495,12 +565,15 @@ async def get_printer_status(
         raise HTTPException(404, "Printer not found")
 
     state = printer_manager.get_status(printer_id)
+    provider = provider_for_printer(printer)
+    capabilities = _printer_capabilities(provider, printer.model)
     if not state:
         return PrinterStatus(
             id=printer_id,
             name=printer.name,
+            provider=provider,
             connected=False,
-            capabilities=_printer_capabilities(printer.model),
+            capabilities=capabilities,
         )
 
     # Determine cover URL if there's an active print (including paused)
@@ -775,9 +848,18 @@ async def get_printer_status(
             )
             current_archive_id = archive_row.scalar_one_or_none()
 
+    snapshot = build_printer_snapshot(
+        state,
+        provider=provider,
+        model=printer.model,
+        can_set_temperature=capabilities.can_set_temperature,
+        supports_chamber_heater=supports_chamber_heater(printer.model),
+    )
+
     return PrinterStatus(
         id=printer_id,
         name=printer.name,
+        provider=provider,
         connected=state.connected,
         state=state.state,
         current_print=state.current_print,
@@ -850,7 +932,8 @@ async def get_printer_status(
         supports_drying_while_printing=supports_drying_while_printing(printer.model, state.firmware_version),
         drying_screen_only=drying_screen_only(printer.model),
         supports_chamber_heater=supports_chamber_heater(printer.model),
-        capabilities=_printer_capabilities(printer.model),
+        capabilities=capabilities,
+        **snapshot,
         current_archive_id=current_archive_id,
         current_plate_id=current_plate_id,
         fila_switch=(
@@ -1033,6 +1116,8 @@ async def diagnose_connection(
         req.ip_address,
         serial_number=req.serial_number or None,
         access_code=req.access_code or None,
+        provider=req.provider or None,
+        model=req.model or None,
     )
 
 
@@ -1130,7 +1215,7 @@ async def get_printer_cover(
     if not subtask_name:
         raise HTTPException(404, f"No subtask_name in printer state (state={state.state})")
 
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         cache_key = (subtask_name, view or "default")
         if printer_id in _cover_cache and cache_key in _cover_cache[printer_id]:
             return Response(content=_cover_cache[printer_id][cache_key], media_type="image/png")
@@ -1475,10 +1560,10 @@ async def list_printer_files(
     # Add full path to each file
     for f in files:
         f["path"] = f"{path.rstrip('/')}/{f['name']}" if path != "/" else f"/{f['name']}"
-        if is_flashforge_model(printer.model) and not f.get("is_directory"):
+        if _is_flashforge_printer(printer) and not f.get("is_directory"):
             f["thumbnail_url"] = f"/api/v1/printers/{printer_id}/files/thumbnail?path={quote(f['path'])}"
 
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         capabilities = {
             "can_download": False,
             "can_delete": False,
@@ -1511,7 +1596,7 @@ async def download_printer_file(
     """Download a file from the printer."""
     printer = await _load_printer_or_404(printer_id)
 
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose file downloads")
 
     data = await download_file_bytes_async(
@@ -1559,7 +1644,7 @@ async def get_printer_file_gcode(
 
     printer = await _load_printer_or_404(printer_id)
 
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose G-code downloads")
 
     data = await download_file_bytes_async(
@@ -1604,7 +1689,7 @@ async def get_printer_file_thumbnail(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    if not is_flashforge_model(printer.model):
+    if not _is_flashforge_printer(printer):
         raise HTTPException(501, "This printer does not expose generic file thumbnails")
 
     image = await asyncio.to_thread(
@@ -1634,7 +1719,7 @@ async def get_printer_file_plates(
 
     printer = await _load_printer_or_404(printer_id)
 
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose 3MF plate metadata downloads")
 
     filename = path.split("/")[-1]
@@ -1880,7 +1965,7 @@ async def get_printer_file_plate_thumbnail(
 
     printer = await _load_printer_or_404(printer_id)
 
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose 3MF plate thumbnails")
 
     data = await download_file_bytes_async(
@@ -1920,7 +2005,7 @@ async def download_printer_files_as_zip(
 
     printer = await _load_printer_or_404(printer_id)
 
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose file downloads")
 
     # Create ZIP in memory
@@ -1966,7 +2051,7 @@ async def delete_printer_file(
 
     from backend.app.services.bambu_ftp import DeleteResult
 
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose file deletion")
 
     result = await delete_file_async(
@@ -2114,7 +2199,7 @@ async def start_drying(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose filament drying control")
 
     # Server-side guard: reject if this model/firmware doesn't support drying
@@ -2193,7 +2278,7 @@ async def stop_drying(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose filament drying control")
 
     # Screen-only models ignore stop just as they ignore start — a cycle running on a
@@ -2235,7 +2320,7 @@ async def set_print_option(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose AI print option control")
 
     client = printer_manager.get_client(printer_id)
@@ -2362,7 +2447,7 @@ async def start_calibration(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose calibration control")
 
     client = printer_manager.get_client(printer_id)
@@ -3443,7 +3528,7 @@ async def set_airduct_mode(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose airduct mode control")
 
     client = printer_manager.get_client(printer_id)
@@ -3508,7 +3593,7 @@ async def set_temperature(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if not is_flashforge_model(printer.model):
+    if not _is_flashforge_printer(printer):
         raise HTTPException(501, "Temperature control is only implemented for FlashForge local API printers")
 
     client = printer_manager.get_client(printer_id)
@@ -3583,7 +3668,7 @@ async def bed_jog(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose Z jog control")
 
     client = printer_manager.get_client(printer_id)
@@ -3707,7 +3792,7 @@ async def home_axes(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose homing control")
 
     client = printer_manager.get_client(printer_id)
@@ -3762,7 +3847,7 @@ async def get_printable_objects(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose object skipping")
 
     client = printer_manager.get_client(printer_id)
@@ -3879,7 +3964,7 @@ async def skip_objects(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if is_flashforge_model(printer.model):
+    if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose object skipping")
 
     client = printer_manager.get_client(printer_id)

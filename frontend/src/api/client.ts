@@ -360,6 +360,7 @@ export interface Printer {
   // PRINTERS_UPDATE — Admin / Operator JWTs or auth-disabled mode. Viewers and
   // API keys receive a Printer without this field.
   access_code?: string;
+  provider?: 'bambu' | 'flashforge';
   model: string | null;
   location: string | null;  // Group/location name
   nozzle_count: number;  // 1 or 2, auto-detected from MQTT
@@ -404,7 +405,7 @@ export interface AMSTray {
   tray_sub_brands: string | null;  // Full name like "PLA Basic", "PETG HF"
   tray_id_name: string | null;  // Bambu filament ID like "A00-Y2" (can decode to color)
   tray_info_idx: string | null;  // Filament preset ID like "GFA00" - maps to cloud setting_id
-  remain: number;
+  remain: number;  // -1 when the provider does not report a fill percentage
   k: number | null;  // Pressure advance value (from tray or K-profile lookup)
   cali_idx: number | null;  // Calibration index for K-profile lookup
   tag_uid: string | null;  // RFID tag UID (any tag)
@@ -485,6 +486,7 @@ export interface FilaSwitchState {
 export interface PrinterStatus {
   id: number;
   name: string;
+  provider?: 'bambu' | 'flashforge';
   connected: boolean;
   state: string | null;
   current_print: string | null;
@@ -588,6 +590,12 @@ export interface PrinterStatus {
   // Active chamber heater (responds to M141). True only for H2C/H2D/H2DPro/H2S/X2D.
   supports_chamber_heater?: boolean;
   capabilities?: PrinterCapabilities;
+  snapshot_version?: number;
+  tools?: PrinterToolStatus[];
+  heaters?: PrinterHeaterStatus[];
+  fans?: PrinterFanStatus[];
+  material_systems?: MaterialSystemStatus[];
+  device_info?: PrinterDeviceInfo | null;
 }
 
 export interface PrinterCapabilities {
@@ -611,7 +619,70 @@ export interface PrinterCapabilities {
   can_preview_files: boolean;
   can_browse_files: boolean;
   can_stream_camera: boolean;
+  can_update_firmware?: boolean;
+  can_virtual_printer?: boolean;
+  can_manage_material_system?: boolean;
   unsupported_reasons?: Record<string, string>;
+}
+
+export interface PrinterToolStatus {
+  id: string;
+  index: number;
+  label: string;
+  temperature: number | null;
+  target_temperature: number | null;
+  heating: boolean;
+  active: boolean | null;
+  nozzle_diameter: string | null;
+  filament_type: string | null;
+}
+
+export interface PrinterHeaterStatus {
+  id: string;
+  label: string;
+  temperature: number | null;
+  target_temperature: number | null;
+  heating: boolean;
+  controllable: boolean;
+}
+
+export interface PrinterFanStatus {
+  id: string;
+  label: string;
+  speed_percent: number | null;
+  active: boolean | null;
+  controllable: boolean;
+}
+
+export interface MaterialSlotStatus {
+  id: number;
+  label: string;
+  occupied: boolean | null;
+  active: boolean;
+  material_type: string | null;
+  color: string | null;
+  remaining_percent: number | null;
+}
+
+export interface MaterialSystemStatus {
+  id: string;
+  name: string;
+  kind: string;
+  slots: MaterialSlotStatus[];
+}
+
+export interface PrinterDeviceInfo {
+  vendor: string;
+  model: string | null;
+  build_volume: string | null;
+  firmware_version: string | null;
+  cumulative_print_time: number | null;
+  cumulative_filament: number | null;
+  tvoc: number | null;
+  lidar: boolean | null;
+  auto_shutdown: boolean | null;
+  auto_shutdown_minutes: number | null;
+  remaining_disk_gb: number | null;
 }
 
 export interface PrinterCreate {
@@ -619,6 +690,7 @@ export interface PrinterCreate {
   serial_number: string;
   ip_address: string;
   access_code: string;
+  provider?: 'bambu' | 'flashforge';
   model?: string;
   location?: string;
   auto_archive?: boolean;
@@ -5858,6 +5930,8 @@ export const api = {
     ip_address: string;
     serial_number?: string;
     access_code?: string;
+    provider?: 'bambu' | 'flashforge';
+    model?: string;
   }) =>
     request<PrinterDiagnosticResult>('/printers/diagnostic', {
       method: 'POST',
@@ -6692,7 +6766,7 @@ export interface AMSHistoryResponse {
   avg_temperature: number | null;
 }
 
-export type HeaterSensorKind = 'nozzle' | 'nozzle_2' | 'bed' | 'chamber';
+export type HeaterSensorKind = string;
 
 export interface HeaterHistoryPoint {
   recorded_at: string;

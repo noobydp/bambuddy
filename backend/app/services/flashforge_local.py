@@ -222,8 +222,11 @@ def _slot_to_tray(slot: dict[str, Any], index: int) -> dict[str, Any]:
         "tray_sub_brands": "",
         "tray_id_name": "",
         "tray_info_idx": "",
-        "remain": 0,
+        # Creator 5 Pro reports whether a slot is occupied, but its detail
+        # payload does not expose a trustworthy remaining percentage.
+        "remain": -1,
         "state": 10 if slot.get("hasFilament", bool(slot)) else 9,
+        "exists": bool(slot.get("hasFilament", bool(slot))),
     }
 
 
@@ -505,11 +508,28 @@ class FlashForgeLocalClient:
             "print_duration_seconds": _int(detail.get("printDuration"), 0),
         }
 
-        nozzle_temp = _max_number(detail.get("nozzleTemps"), _number(detail.get("nozzleTemp"), 0.0))
-        nozzle_target = _max_number(
-            detail.get("nozzleTargetTemps"),
-            _number(detail.get("nozzleTargetTemp"), 0.0),
+        raw_nozzle_temps = detail.get("nozzleTemps")
+        raw_nozzle_targets = detail.get("nozzleTargetTemps")
+        tool_count = max(
+            _int(detail.get("nozzleCnt"), 0),
+            len(raw_nozzle_temps) if isinstance(raw_nozzle_temps, list) else 0,
+            len(raw_nozzle_targets) if isinstance(raw_nozzle_targets, list) else 0,
+            1,
         )
+        nozzle_temps = [
+            _number(raw_nozzle_temps[index], 0.0)
+            if isinstance(raw_nozzle_temps, list) and index < len(raw_nozzle_temps)
+            else _number(detail.get("nozzleTemp"), 0.0)
+            for index in range(tool_count)
+        ]
+        nozzle_targets = [
+            _number(raw_nozzle_targets[index], 0.0)
+            if isinstance(raw_nozzle_targets, list) and index < len(raw_nozzle_targets)
+            else _number(detail.get("nozzleTargetTemp"), 0.0)
+            for index in range(tool_count)
+        ]
+        nozzle_temp = max(nozzle_temps, default=0.0)
+        nozzle_target = max(nozzle_targets, default=0.0)
         bed_temp = _number(detail.get("platTemp"), _number(detail.get("bedTemp"), 0.0))
         bed_target = _number(detail.get("platTargetTemp"), _number(detail.get("bedTargetTemp"), 0.0))
         chamber_temp = _number(detail.get("chamberTemp"), 0.0)
@@ -526,6 +546,11 @@ class FlashForgeLocalClient:
             "chamber_target": chamber_target,
             "chamber_heating": chamber_target > chamber_temp + 1,
         }
+        for index, (temperature, target) in enumerate(zip(nozzle_temps, nozzle_targets, strict=False)):
+            self.state.temperatures[f"tool_{index}"] = temperature
+            self.state.temperatures[f"tool_{index}_target"] = target
+            self.state.temperatures[f"tool_{index}_heating"] = target > temperature + 1
+        self.state.raw_data["tool_count"] = tool_count
 
         station = detail.get("matlStationInfo") if isinstance(detail.get("matlStationInfo"), dict) else {}
         slots = station.get("slotInfos") if isinstance(station.get("slotInfos"), list) else []
@@ -544,6 +569,115 @@ class FlashForgeLocalClient:
                 self.state.last_loaded_tray = current_slot
         else:
             self.state.raw_data["ams"] = []
+
+        nozzle_diameter = str(detail.get("nozzleModel") or "").strip() or None
+        self.state.raw_data["provider_snapshot"] = {
+            "version": 1,
+            "tools": [
+                {
+                    "id": f"tool_{index}",
+                    "index": index,
+                    "label": f"Tool {index + 1}",
+                    "temperature": temperature,
+                    "target_temperature": nozzle_targets[index],
+                    "heating": nozzle_targets[index] > temperature + 1,
+                    # The detail endpoint does not expose an active tool.
+                    "active": None,
+                    "nozzle_diameter": nozzle_diameter,
+                    "filament_type": None,
+                }
+                for index, temperature in enumerate(nozzle_temps)
+            ],
+            "heaters": [
+                {
+                    "id": "bed",
+                    "label": "Bed",
+                    "temperature": bed_temp,
+                    "target_temperature": bed_target,
+                    "heating": bed_target > bed_temp + 1,
+                    "controllable": True,
+                },
+                {
+                    "id": "chamber",
+                    "label": "Chamber",
+                    "temperature": chamber_temp,
+                    "target_temperature": chamber_target,
+                    "heating": chamber_target > chamber_temp + 1,
+                    "controllable": True,
+                },
+            ],
+            "fans": [
+                {
+                    "id": "part",
+                    "label": "Part cooling",
+                    "speed_percent": self.state.cooling_fan_speed,
+                    "active": self.state.cooling_fan_speed > 0,
+                    "controllable": False,
+                },
+                {
+                    "id": "chamber",
+                    "label": "Chamber",
+                    "speed_percent": self.state.big_fan2_speed,
+                    "active": self.state.big_fan2_speed > 0,
+                    "controllable": False,
+                },
+                {
+                    "id": "internal",
+                    "label": "Internal",
+                    "speed_percent": None,
+                    "active": str(detail.get("internalFanStatus") or "").lower() == "open",
+                    "controllable": False,
+                },
+                {
+                    "id": "external",
+                    "label": "External",
+                    "speed_percent": None,
+                    "active": str(detail.get("externalFanStatus") or "").lower() == "open",
+                    "controllable": False,
+                },
+            ],
+            "material_systems": (
+                [
+                    {
+                        "id": "ifs_0",
+                        "name": "IFS",
+                        "kind": "flashforge_ifs",
+                        "slots": [
+                            {
+                                "id": index,
+                                "label": f"Slot {index + 1}",
+                                "occupied": bool(slot.get("hasFilament", bool(slot))),
+                                "active": current_slot == index,
+                                "material_type": (
+                                    slot.get("materialName")
+                                    or slot.get("materialType")
+                                    or slot.get("type")
+                                    or None
+                                ),
+                                "color": slot.get("materialColor") or slot.get("color"),
+                                "remaining_percent": None,
+                            }
+                            for index, slot in enumerate(slots)
+                        ],
+                    }
+                ]
+                if slots
+                else []
+            ),
+            "device_info": {
+                "vendor": "FlashForge",
+                "model": detail.get("model") or self.model,
+                "build_volume": detail.get("measure"),
+                "firmware_version": self.state.firmware_version or None,
+                "cumulative_print_time": _number(detail.get("cumulativePrintTime"), 0.0),
+                "cumulative_filament": _number(detail.get("cumulativeFilament"), 0.0),
+                "tvoc": _number(detail.get("tvoc"), 0.0),
+                "lidar": bool(_int(detail.get("lidar"), 0)),
+                "auto_shutdown": str(detail.get("autoShutdown") or "").lower() == "open",
+                "auto_shutdown_minutes": _int(detail.get("autoShutdownTime"), 0),
+                "remaining_disk_gb": _number(detail.get("remainingDiskSpace"), 0.0),
+            },
+        }
 
         error_code = detail.get("errorCode")
         if error_code in (None, "", 0, "0", "OK", "ok"):

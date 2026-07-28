@@ -1242,6 +1242,7 @@ async def update_virtual_printer_settings(
     from sqlalchemy import select
 
     from backend.app.models.printer import Printer
+    from backend.app.services.printer_providers import PROVIDER_BAMBU, provider_for_printer
     from backend.app.services.virtual_printer import (
         DEFAULT_VIRTUAL_PRINTER_MODEL,
         VIRTUAL_PRINTER_MODELS,
@@ -1304,6 +1305,19 @@ async def update_virtual_printer_settings(
     # Mode-specific validation and printer lookup
     target_printer_ip = ""
     target_printer_serial = ""
+    if new_target_id:
+        result = await db.execute(select(Printer).where(Printer.id == new_target_id))
+        target_printer = result.scalar_one_or_none()
+        if not target_printer:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"Printer with ID {new_target_id} not found"},
+            )
+        if provider_for_printer(target_printer) != PROVIDER_BAMBU:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Virtual Printer targets must use the Bambu LAN protocol"},
+            )
     if new_mode == "proxy":
         # Proxy mode requires target printer when enabling
         if new_enabled and not new_target_id:
@@ -1318,15 +1332,8 @@ async def update_virtual_printer_settings(
 
         # Look up printer IP and serial if we have a target
         if new_target_id:
-            result = await db.execute(select(Printer).where(Printer.id == new_target_id))
-            printer = result.scalar_one_or_none()
-            if not printer:
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": f"Printer with ID {new_target_id} not found"},
-                )
-            target_printer_ip = printer.ip_address
-            target_printer_serial = printer.serial_number
+            target_printer_ip = target_printer.ip_address
+            target_printer_serial = target_printer.serial_number
         # Access code not required for proxy mode
     else:
         # Non-proxy modes require access code when enabling

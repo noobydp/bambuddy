@@ -1195,8 +1195,10 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
     nozzle_2_temp = round(temps.get("nozzle_2", 0)) if "nozzle_2" in temps else ""
     chamber_temp = round(temps.get("chamber", 0)) if "chamber" in temps else ""
 
-    # Auto-detect dual-nozzle printers from MQTT temperature data
-    if "nozzle_2" in temps and printer_id not in _nozzle_count_updated:
+    # Auto-detect the provider-neutral tool count. Bambu historically exposed
+    # only nozzle/nozzle_2; FlashForge Creator 5 Pro exposes four tool sensors.
+    detected_tool_count = int((state.raw_data or {}).get("tool_count") or (2 if "nozzle_2" in temps else 1))
+    if detected_tool_count > 1 and printer_id not in _nozzle_count_updated:
         _nozzle_count_updated.add(printer_id)
         # Update nozzle_count in database
         async with async_session() as db:
@@ -1204,16 +1206,23 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
 
             result = await db.execute(select(Printer).where(Printer.id == printer_id))
             printer = result.scalar_one_or_none()
-            if printer and printer.nozzle_count != 2:
-                printer.nozzle_count = 2
+            if printer and printer.nozzle_count != detected_tool_count:
+                printer.nozzle_count = detected_tool_count
                 await db.commit()
                 logging.getLogger(__name__).info(
-                    f"Auto-detected dual-nozzle printer {printer_id}, updated nozzle_count=2"
+                    "Auto-detected %s tools for printer %s, updated nozzle_count",
+                    detected_tool_count,
+                    printer_id,
                 )
 
     # Include target temps for heating phase detection
     bed_target = round(temps.get("bed_target", 0))
     nozzle_target = round(temps.get("nozzle_target", 0))
+    tool_temp_key = tuple(
+        (key, round(value))
+        for key, value in sorted(temps.items())
+        if key.startswith("tool_") and not key.endswith(("_target", "_heating"))
+    )
 
     # Include tray_now and vt_tray hash so external spool changes trigger broadcasts
     vt_tray_key = hash(str(state.raw_data.get("vt_tray", []))) if state.raw_data else 0
@@ -1231,7 +1240,7 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
     )
     status_key = (
         f"{state.connected}:{state.state}:{state.progress}:{state.layer_num}:"
-        f"{nozzle_temp}:{bed_temp}:{nozzle_2_temp}:{chamber_temp}:"
+        f"{nozzle_temp}:{bed_temp}:{nozzle_2_temp}:{chamber_temp}:{tool_temp_key}:"
         f"{state.stg_cur}:{bed_target}:{nozzle_target}:"
         f"{state.cooling_fan_speed}:{state.big_fan1_speed}:{state.big_fan2_speed}:"
         f"{state.chamber_light}:{state.active_extruder}:{state.tray_now}:{vt_tray_key}:"
@@ -5709,17 +5718,18 @@ _printer_sensor_history_task: asyncio.Task | None = None
 PRINTER_SENSOR_HISTORY_INTERVAL = 60  # Record every minute — heaters move faster than AMS humidity
 PRINTER_SENSOR_HISTORY_RETENTION_DAYS = 30
 _printer_sensor_cleanup_counter = 0
-# Sensor kinds tracked in state.temperatures — these are the normalised keys the
-# MQTT parser writes, so we don't need to handle per-model field aliases here
-# (nozzle_temper / left_nozzle_temper / right_nozzle_temper / chamber_temper
-# are all collapsed by services/bambu_mqtt.py before they reach this loop).
-_SENSOR_KINDS = ("nozzle", "nozzle_2", "bed", "chamber")
-_SENSOR_TARGET_KEYS = {
-    "nozzle": "nozzle_target",
-    "nozzle_2": "nozzle_2_target",
-    "bed": "bed_target",
-    "chamber": "chamber_target",
-}
+def _temperature_sensor_kinds(temperatures: dict) -> list[str]:
+    """Return current-value keys from a provider-neutral temperature map."""
+    return sorted(
+        key
+        for key, value in temperatures.items()
+        if (
+            key in {"nozzle", "nozzle_2", "bed", "chamber"}
+            or (key.startswith("tool_") and key.removeprefix("tool_").isdigit())
+        )
+        and not key.endswith(("_target", "_heating"))
+        and isinstance(value, (int, float))
+    )
 
 
 async def record_printer_sensor_history():
@@ -5753,7 +5763,7 @@ async def record_printer_sensor_history():
                     if not isinstance(temps, dict):
                         continue
 
-                    for kind in _SENSOR_KINDS:
+                    for kind in _temperature_sensor_kinds(temps):
                         if kind not in temps:
                             continue
                         try:
@@ -5761,7 +5771,7 @@ async def record_printer_sensor_history():
                         except (ValueError, TypeError):
                             continue
 
-                        target_raw = temps.get(_SENSOR_TARGET_KEYS[kind])
+                        target_raw = temps.get(f"{kind}_target")
                         target_val: float | None = None
                         if target_raw is not None:
                             try:
