@@ -163,11 +163,7 @@ def test_apply_detail_maps_creator_5_pro_status():
     assert client.state.total_layers == 100
     assert client.state.firmware_version == "1.9.3"
     assert client.state.ipcam is True
-    assert {
-        key: value
-        for key, value in client.state.temperatures.items()
-        if not key.startswith("tool_")
-    } == {
+    assert {key: value for key, value in client.state.temperatures.items() if not key.startswith("tool_")} == {
         "nozzle": 209,
         "nozzle_target": 210,
         "nozzle_heating": False,

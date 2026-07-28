@@ -235,11 +235,7 @@ async def run_connection_diagnostic(
     title and fix text (localized) keyed on that id + status.
     """
     effective_model = getattr(printer, "model", None) if printer is not None else model
-    effective_provider = (
-        getattr(printer, "provider", None)
-        if printer is not None
-        else provider
-    )
+    effective_provider = getattr(printer, "provider", None) if printer is not None else provider
     if normalize_printer_provider(effective_provider, effective_model) == PROVIDER_FLASHFORGE:
         return await _run_flashforge_diagnostic(
             ip_address,

@@ -15,6 +15,7 @@ from backend.app.models.user import User
 
 router = APIRouter(prefix="/printer-sensor-history", tags=["printer-sensor-history"])
 
+
 def _valid_kind(kind: str) -> bool:
     return kind in {"nozzle", "nozzle_2", "bed", "chamber"} or (
         kind.startswith("tool_") and kind.removeprefix("tool_").isdigit()

@@ -649,10 +649,7 @@ class FlashForgeLocalClient:
                                 "occupied": bool(slot.get("hasFilament", bool(slot))),
                                 "active": current_slot == index,
                                 "material_type": (
-                                    slot.get("materialName")
-                                    or slot.get("materialType")
-                                    or slot.get("type")
-                                    or None
+                                    slot.get("materialName") or slot.get("materialType") or slot.get("type") or None
                                 ),
                                 "color": slot.get("materialColor") or slot.get("color"),
                                 "remaining_percent": None,
