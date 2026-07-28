@@ -42,7 +42,7 @@ async def printer_row(db_session):
 
     printer = Printer(
         name="StatusTest",
-        ip_address="192.168.1.44",
+        ip_address="192.0.2.44",
         access_code="12345678",
         serial_number="00M00A000000010",
         model="P1S",

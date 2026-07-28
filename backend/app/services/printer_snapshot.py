@@ -32,7 +32,7 @@ def _legacy_tools(state) -> list[dict]:
     for index, key in enumerate(keys):
         temperature = _float_or_none(temperatures.get(key))
         target = _float_or_none(temperatures.get(f"{key}_target"))
-        nozzle_info = (getattr(state, "nozzles", None) or [])
+        nozzle_info = getattr(state, "nozzles", None) or []
         info = nozzle_info[index] if index < len(nozzle_info) else None
         tools.append(
             {
@@ -157,6 +157,8 @@ def build_printer_snapshot(
             "tools": native.get("tools") or [],
             "heaters": native.get("heaters") or [],
             "fans": native.get("fans") or [],
+            "sensors": native.get("sensors") or [],
+            "motion": native.get("motion"),
             "material_systems": native.get("material_systems") or [],
             "device_info": native.get("device_info"),
         }
@@ -169,6 +171,8 @@ def build_printer_snapshot(
             chamber_controllable=can_set_temperature or supports_chamber_heater,
         ),
         "fans": _legacy_fans(state),
+        "sensors": [],
+        "motion": None,
         "material_systems": _legacy_material_systems(state),
         "device_info": {
             "vendor": "Bambu Lab" if provider == "bambu" else provider.title(),

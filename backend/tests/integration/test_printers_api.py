@@ -68,6 +68,9 @@ class TestPrintersAPI:
         assert providers["bambu"]["credential_label"] == "Access Code"
         assert providers["flashforge"]["credential_label"] == "Device Key"
         assert providers["flashforge"]["models"] == ["FlashForge Creator 5 Pro"]
+        assert providers["klipper"]["default_port"] == 7125
+        assert providers["klipper"]["serial_required"] is False
+        assert providers["klipper"]["credential_required"] is False
 
     # ========================================================================
     # Create endpoints
@@ -119,6 +122,45 @@ class TestPrintersAPI:
         _mock_printer_test_connection.assert_awaited_once()
         assert _mock_printer_test_connection.await_args.kwargs["provider"] == "flashforge"
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_create_klipper_printer_probes_and_generates_identity(
+        self,
+        async_client: AsyncClient,
+        _mock_printer_test_connection,
+    ):
+        _mock_printer_test_connection.return_value = {
+            "success": True,
+            "state": "ready",
+            "model": "Klipper",
+            "hostname": "tinyt",
+            "serial_number": "KLIPPER-TEST-GENERATED",
+            "connection_port": 7125,
+        }
+        response = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "TinyT",
+                "ip_address": "192.0.2.30",
+                "provider": "klipper",
+                "connection_port": 7125,
+                "model": "Klipper",
+                "is_active": False,
+                "slicer_preset_source": "orca_cloud",
+                "slicer_preset_id": "TinyT",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["provider"] == "klipper"
+        assert body["serial_number"] == "KLIPPER-TEST-GENERATED"
+        assert body["connection_port"] == 7125
+        assert body["slicer_preset_id"] == "TinyT"
+        kwargs = _mock_printer_test_connection.await_args.kwargs
+        assert kwargs["serial_number"] is None
+        assert kwargs["access_code"] == ""
+        assert kwargs["provider"] == "klipper"
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -355,7 +397,7 @@ class TestPrintersAPI:
         file_bytes = b"fake 3mf content"
 
         with patch(
-            "backend.app.api.routes.printers.download_file_bytes_async",
+            "backend.app.services.printer_files.download_file_bytes_async",
             new=AsyncMock(return_value=file_bytes),
         ):
             response = await async_client.get(
@@ -395,7 +437,7 @@ class TestPrintersAPI:
         ]
 
         with patch(
-            "backend.app.api.routes.printers.list_files_async",
+            "backend.app.services.printer_files.list_files_async",
             new=AsyncMock(return_value=listed_files),
         ) as list_mock:
             response = await async_client.get(
@@ -483,8 +525,8 @@ class TestPrintersAPI:
         printer = await printer_factory(model="FlashForge Creator 5 Pro")
 
         with (
-            patch("backend.app.api.routes.printers.download_file_bytes_async", new=AsyncMock()) as download_mock,
-            patch("backend.app.api.routes.printers.delete_file_async", new=AsyncMock()) as delete_mock,
+            patch("backend.app.services.printer_files.download_file_bytes_async", new=AsyncMock()) as download_mock,
+            patch("backend.app.services.printer_files.delete_file_async", new=AsyncMock()) as delete_mock,
         ):
             response = await async_client.request(method, f"/api/v1/printers/{printer.id}{path}", **kwargs)
 

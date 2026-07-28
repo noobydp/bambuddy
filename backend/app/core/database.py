@@ -1240,6 +1240,16 @@ async def run_migrations(conn):
         await _safe_execute(
             conn, "ALTER TABLE print_queue ADD COLUMN cleanup_library_after_dispatch BOOLEAN DEFAULT false"
         )
+    if is_sqlite():
+        await _safe_execute(
+            conn,
+            "ALTER TABLE print_queue ADD COLUMN klipper_compatibility_acknowledged BOOLEAN DEFAULT 0",
+        )
+    else:
+        await _safe_execute(
+            conn,
+            "ALTER TABLE print_queue ADD COLUMN klipper_compatibility_acknowledged BOOLEAN DEFAULT false",
+        )
 
     # Migration: Add queue_force_color_match column to virtual_printers (#1188).
     # Opt-in flag: when true, VP queue-mode uploads pin the per-slot type+color
@@ -3791,6 +3801,11 @@ async def run_migrations(conn):
     # it from a display-model string. Existing Creator 5 Pro rows are backfilled
     # explicitly; all other legacy rows keep the Bambu provider.
     await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN provider VARCHAR(30) DEFAULT 'bambu'")
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN connection_port INTEGER")
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN slicer_preset_source VARCHAR(30)")
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN slicer_preset_id VARCHAR(255)")
+    if not is_sqlite():
+        await _safe_execute(conn, "ALTER TABLE printers ALTER COLUMN access_code TYPE VARCHAR(255)")
     async with conn.begin_nested():
         await conn.execute(
             text(
@@ -3799,9 +3814,7 @@ async def run_migrations(conn):
                 "LIKE '%CREATOR5PRO%'"
             )
         )
-        await conn.execute(
-            text("UPDATE printers SET provider = 'bambu' WHERE provider IS NULL OR TRIM(provider) = ''")
-        )
+        await conn.execute(text("UPDATE printers SET provider = 'bambu' WHERE provider IS NULL OR TRIM(provider) = ''"))
 
 
 _USER_PRINT_TEMPLATE_RENAMES: tuple[tuple[str, str, str], ...] = (

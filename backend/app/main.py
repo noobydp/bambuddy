@@ -2478,7 +2478,9 @@ async def on_print_start(printer_id: int, data: dict):
         logger.info(
             f"[PLATE CHECK] printer_id={printer_id}, plate_detection_enabled={printer.plate_detection_enabled if printer else 'NO PRINTER'}"
         )
-        if printer and printer.plate_detection_enabled:
+        from backend.app.services.printer_providers import PROVIDER_KLIPPER, provider_for_printer
+
+        if printer and printer.plate_detection_enabled and provider_for_printer(printer) != PROVIDER_KLIPPER:
             logger.info("[PLATE CHECK] ENTERING plate detection code for printer %s", printer_id)
             # Release the pooled DB connection before the plate-detection camera
             # work (a 2.5s light-settle sleep + FTP/camera capture). Only the
@@ -5718,6 +5720,8 @@ _printer_sensor_history_task: asyncio.Task | None = None
 PRINTER_SENSOR_HISTORY_INTERVAL = 60  # Record every minute — heaters move faster than AMS humidity
 PRINTER_SENSOR_HISTORY_RETENTION_DAYS = 30
 _printer_sensor_cleanup_counter = 0
+
+
 def _temperature_sensor_kinds(temperatures: dict) -> list[str]:
     """Return current-value keys from a provider-neutral temperature map."""
     return sorted(

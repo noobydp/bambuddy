@@ -123,7 +123,7 @@ type Connection = {
   ip_address: string;
   serial_number?: string;
   access_code?: string;
-  provider?: 'bambu' | 'flashforge';
+  provider?: 'bambu' | 'flashforge' | 'klipper';
   model?: string;
 };
 

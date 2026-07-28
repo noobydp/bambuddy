@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import re
 import zipfile
@@ -32,6 +33,13 @@ from backend.app.schemas.printer import (
     FilaSwitchResponse,
     HmsActionBody,
     HMSErrorResponse,
+    KlipperEmergencyStopBody,
+    KlipperFactorBody,
+    KlipperFanBody,
+    KlipperGcodeBody,
+    KlipperJogBody,
+    KlipperMacroBody,
+    KlipperTemperatureBody,
     NozzleInfoResponse,
     NozzleRackSlot,
     PrinterCapabilities,
@@ -45,18 +53,22 @@ from backend.app.schemas.printer import (
 )
 from backend.app.services.bambu_ftp import (
     cache_3mf_download,
-    delete_file_async,
-    download_file_bytes_async,
     download_file_try_paths_async,
     get_cached_3mf,
-    get_storage_info_async,
-    list_files_async,
 )
 from backend.app.services.flashforge_local import (
     get_flashforge_current_thumbnail,
     get_flashforge_gcode_thumbnail,
 )
+from backend.app.services.moonraker import MoonrakerClient
 from backend.app.services.printer_diagnostic import run_connection_diagnostic
+from backend.app.services.printer_files import (
+    delete_printer_file as provider_delete_printer_file,
+    download_printer_file as provider_download_printer_file,
+    get_printer_storage as provider_get_printer_storage,
+    get_printer_thumbnail as provider_get_printer_thumbnail,
+    list_printer_files as provider_list_printer_files,
+)
 from backend.app.services.printer_manager import (
     drying_screen_only,
     get_derived_status_name,
@@ -70,6 +82,7 @@ from backend.app.services.printer_manager import (
 )
 from backend.app.services.printer_providers import (
     PROVIDER_FLASHFORGE,
+    PROVIDER_KLIPPER,
     normalize_printer_provider,
     provider_descriptors,
     provider_for_printer,
@@ -120,8 +133,88 @@ def _is_flashforge_printer(printer: Printer) -> bool:
     return provider_for_printer(printer) == PROVIDER_FLASHFORGE
 
 
-def _printer_capabilities(provider: str | None, model: str | None) -> PrinterCapabilities:
+def _reject_klipper_legacy_route(printer: Printer, feature: str) -> None:
+    """Keep Bambu-protocol routes from accidentally reaching Moonraker."""
+    if provider_for_printer(printer) == PROVIDER_KLIPPER:
+        raise HTTPException(
+            501,
+            f"{feature} is not available through this Bambu-specific route for Klipper printers",
+        )
+
+
+def _float_for_route(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def _require_klipper_client(printer_id: int, db: AsyncSession) -> tuple[Printer, MoonrakerClient]:
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    if provider_for_printer(printer) != PROVIDER_KLIPPER:
+        raise HTTPException(404, "Klipper operation is not available for this printer")
+    client = printer_manager.get_client(printer_id)
+    if not isinstance(client, MoonrakerClient) or not client.state.connected:
+        raise HTTPException(409, "Moonraker is not connected")
+    return printer, client
+
+
+def _printer_capabilities(provider: str | None, model: str | None, state=None) -> PrinterCapabilities:
     provider = normalize_printer_provider(provider, model)
+    if provider == PROVIDER_KLIPPER:
+        outside_scope = "This operation is intentionally outside Bambuddy's first Klipper release."
+        objects = set(((getattr(state, "raw_data", None) or {}).get("moonraker") or {}).get("objects") or [])
+        has_heater = any(
+            name == "extruder"
+            or name.startswith("extruder")
+            or name == "heater_bed"
+            or name.startswith(("heater_generic ", "temperature_fan "))
+            for name in objects
+        )
+        has_fan = any(name == "fan" or name.startswith("fan_generic ") for name in objects)
+        has_toolchanger = "toolchanger" in objects and any(name.startswith("tool ") for name in objects)
+        return PrinterCapabilities(
+            can_pause=True,
+            can_resume=True,
+            can_stop=True,
+            can_clear_errors=False,
+            can_chamber_light=False,
+            can_print_speed=False,
+            can_set_temperature=has_heater,
+            can_airduct_mode=False,
+            can_bed_jog=False,
+            can_home_axes=True,
+            can_skip_objects=False,
+            can_dry_filament=False,
+            can_calibrate=False,
+            can_upload_files=True,
+            can_list_files=True,
+            can_download_files=True,
+            can_delete_files=True,
+            can_preview_files=True,
+            can_browse_files=True,
+            can_stream_camera=True,
+            can_update_firmware=False,
+            can_virtual_printer=False,
+            can_manage_material_system=False,
+            can_set_fan=has_fan,
+            can_set_speed_factor=True,
+            can_set_flow_factor=True,
+            can_jog_axes=True,
+            can_level_gantry="quad_gantry_level" in objects or "z_tilt" in objects,
+            can_calibrate_bed_mesh="bed_mesh" in objects,
+            can_select_tool=has_toolchanger,
+            can_run_gcode=True,
+            can_emergency_stop=True,
+            unsupported_reasons={
+                "can_update_firmware": outside_scope,
+                "can_virtual_printer": "Virtual Printer emulates the Bambu LAN protocol.",
+                "can_manage_material_system": "Klipper filament sensors are exposed as sensors, not an AMS.",
+            },
+        )
     if provider == PROVIDER_FLASHFORGE:
         local_api_gap = "FlashForge's known LAN API does not expose this Bambu control."
         file_gap = "FlashForge's known LAN API exposes file listing/upload, but not direct file download, delete, preview, or directory browsing."
@@ -231,15 +324,15 @@ async def create_printer(
     were turning into support tickets that all traced back to a mistyped
     access code.
     """
-    # Check if serial number already exists
-    result = await db.execute(select(Printer).where(Printer.serial_number == printer_data.serial_number))
-    if result.scalar_one_or_none():
-        raise HTTPException(400, "Printer with this serial number already exists")
-
     try:
         provider = normalize_printer_provider(printer_data.provider, printer_data.model)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+    if printer_data.serial_number:
+        result = await db.execute(select(Printer).where(Printer.serial_number == printer_data.serial_number))
+        if result.scalar_one_or_none():
+            raise HTTPException(400, "Printer with this serial number already exists")
 
     test_result = await printer_manager.test_connection(
         ip_address=printer_data.ip_address,
@@ -247,6 +340,7 @@ async def create_printer(
         access_code=printer_data.access_code,
         model=printer_data.model,
         provider=provider,
+        connection_port=printer_data.connection_port,
     )
     if not test_result.get("success"):
         # The frontend renders the user-facing message via i18n on `code`;
@@ -255,15 +349,21 @@ async def create_printer(
             status_code=400,
             detail={
                 "code": "printer_connection_failed",
-                "message": (
-                    "Could not connect to the printer. Verify IP address, serial number, "
-                    "and access code, and confirm LAN-only mode is enabled. "
-                    "The printer was not added."
+                "message": str(
+                    test_result.get("message") or "Could not connect to the printer. The printer was not added."
                 ),
             },
         )
 
-    printer = Printer(**printer_data.model_dump(exclude={"provider"}), provider=provider)
+    values = printer_data.model_dump(exclude={"provider"})
+    if provider == PROVIDER_KLIPPER:
+        values["serial_number"] = test_result["serial_number"]
+        values["model"] = test_result.get("model") or "Klipper"
+        values["connection_port"] = test_result.get("connection_port") or printer_data.connection_port or 7125
+        result = await db.execute(select(Printer).where(Printer.serial_number == values["serial_number"]))
+        if result.scalar_one_or_none():
+            raise HTTPException(400, "This Moonraker endpoint is already configured")
+    printer = Printer(**values, provider=provider)
     db.add(printer)
     await db.commit()
     await db.refresh(printer)
@@ -486,7 +586,9 @@ async def update_printer(
     await db.refresh(printer)
 
     # Reconnect if connection settings changed
-    if any(k in update_data for k in ["ip_address", "access_code", "provider", "model", "is_active"]):
+    if any(
+        k in update_data for k in ["ip_address", "access_code", "provider", "connection_port", "model", "is_active"]
+    ):
         printer_manager.disconnect_printer(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)
@@ -566,7 +668,7 @@ async def get_printer_status(
 
     state = printer_manager.get_status(printer_id)
     provider = provider_for_printer(printer)
-    capabilities = _printer_capabilities(provider, printer.model)
+    capabilities = _printer_capabilities(provider, printer.model, state)
     if not state:
         return PrinterStatus(
             id=printer_id,
@@ -823,7 +925,7 @@ async def get_printer_status(
     # Filter out chamber temp for models that don't have a real sensor
     # P1P, P1S, A1, A1Mini report meaningless chamber_temper values
     temperatures = state.temperatures
-    if not supports_chamber_temp(printer.model):
+    if provider != PROVIDER_KLIPPER and not supports_chamber_temp(printer.model):
         temperatures = {
             k: v for k, v in temperatures.items() if k not in ("chamber", "chamber_target", "chamber_heating")
         }
@@ -948,6 +1050,245 @@ async def get_printer_status(
             else None
         ),
     )
+
+
+@router.get("/{printer_id}/klipper/diagnostics")
+async def get_klipper_diagnostics(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a secret-free Moonraker capability and connection report."""
+    printer, client = await _require_klipper_client(printer_id, db)
+    moonraker = (client.state.raw_data or {}).get("moonraker") or {}
+    snapshot = (client.state.raw_data or {}).get("provider_snapshot") or {}
+    return {
+        "connected": client.state.connected,
+        "endpoint": f"{printer.ip_address}:{printer.connection_port or 7125}",
+        "api_key_configured": bool(printer.access_code),
+        "objects": moonraker.get("objects") or [],
+        "macros": moonraker.get("macros") or [],
+        "webcams": moonraker.get("webcams") or [],
+        "toolchanger_ready": bool(moonraker.get("toolchanger_ready")),
+        "device_info": snapshot.get("device_info"),
+    }
+
+
+@router.get("/{printer_id}/klipper/macros")
+async def list_klipper_macros(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    return {"macros": client.get_macros()}
+
+
+@router.get("/{printer_id}/klipper/history")
+async def list_klipper_history(
+    printer_id: int,
+    limit: int = Query(default=25, ge=1, le=100),
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    return {"jobs": await asyncio.to_thread(client.get_print_history, limit)}
+
+
+@router.post("/{printer_id}/klipper/macros/{macro_name}/execute")
+async def execute_klipper_macro(
+    printer_id: int,
+    macro_name: str,
+    body: KlipperMacroBody,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if not client.run_macro(macro_name, body.parameters):
+        raise HTTPException(400, "Macro was not discovered or Moonraker rejected the command")
+    logger.info("KLIPPER AUDIT: printer=%s action=macro name=%s", printer_id, macro_name)
+    return {"success": True}
+
+
+@router.get("/{printer_id}/klipper/console/history")
+async def get_klipper_console_history(
+    printer_id: int,
+    limit: int = Query(default=100, ge=1, le=500),
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    return {"history": client.get_console_history(limit)}
+
+
+@router.post("/{printer_id}/klipper/console/gcode")
+async def submit_klipper_gcode(
+    printer_id: int,
+    body: KlipperGcodeBody,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if not body.danger_acknowledged:
+        raise HTTPException(412, "A danger acknowledgement is required before using the G-code console")
+    if not client.run_gcode(body.script, source="console"):
+        raise HTTPException(400, "Moonraker rejected the G-code command")
+    command_hash = hashlib.sha256(body.script.encode()).hexdigest()[:12]
+    logger.info(
+        "KLIPPER AUDIT: printer=%s action=raw_gcode bytes=%s sha256=%s",
+        printer_id,
+        len(body.script.encode()),
+        command_hash,
+    )
+    return {"success": True}
+
+
+@router.post("/{printer_id}/klipper/emergency-stop")
+async def klipper_emergency_stop(
+    printer_id: int,
+    body: KlipperEmergencyStopBody,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if body.confirmation.strip().upper() != "EMERGENCY STOP":
+        raise HTTPException(412, "Type EMERGENCY STOP to confirm")
+    if not client.emergency_stop():
+        raise HTTPException(502, "Moonraker did not acknowledge the emergency stop")
+    logger.warning("KLIPPER AUDIT: printer=%s action=emergency_stop", printer_id)
+    return {"success": True}
+
+
+@router.post("/{printer_id}/klipper/heaters/{heater_id}/target")
+async def set_klipper_heater_target(
+    printer_id: int,
+    heater_id: str,
+    body: KlipperTemperatureBody,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if heater_id == "extruder":
+        success = client.set_nozzle_temperature(body.target, 0)
+    elif heater_id.startswith("extruder") and heater_id[len("extruder") :].isdigit():
+        success = client.set_nozzle_temperature(body.target, int(heater_id[len("extruder") :]))
+    elif heater_id == "bed":
+        success = client.set_bed_temperature(body.target)
+    else:
+        success = client.set_heater_temperature(heater_id, body.target)
+    if not success:
+        raise HTTPException(400, "Heater was not discovered or Moonraker rejected the target")
+    logger.info("KLIPPER AUDIT: printer=%s action=heater_target heater=%s", printer_id, heater_id)
+    return {"success": True}
+
+
+@router.post("/{printer_id}/klipper/fans/{fan_id}/speed")
+async def set_klipper_fan_speed(
+    printer_id: int,
+    fan_id: str,
+    body: KlipperFanBody,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if not client.set_fan_percent(fan_id, body.speed_percent):
+        raise HTTPException(400, "Fan was not controllable or Moonraker rejected the speed")
+    logger.info("KLIPPER AUDIT: printer=%s action=fan_speed fan=%s", printer_id, fan_id)
+    return {"success": True}
+
+
+@router.post("/{printer_id}/klipper/speed-factor")
+async def set_klipper_speed_factor(
+    printer_id: int,
+    body: KlipperFactorBody,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if not client.set_speed_factor(body.percent):
+        raise HTTPException(400, "Speed factor must be between 10 and 300 percent")
+    logger.info("KLIPPER AUDIT: printer=%s action=speed_factor", printer_id)
+    return {"success": True}
+
+
+@router.post("/{printer_id}/klipper/flow-factor")
+async def set_klipper_flow_factor(
+    printer_id: int,
+    body: KlipperFactorBody,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if not client.set_flow_factor(body.percent):
+        raise HTTPException(400, "Flow factor must be between 50 and 200 percent")
+    logger.info("KLIPPER AUDIT: printer=%s action=flow_factor", printer_id)
+    return {"success": True}
+
+
+@router.post("/{printer_id}/klipper/jog")
+async def jog_klipper_axis(
+    printer_id: int,
+    body: KlipperJogBody,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if client.state.state != "IDLE":
+        raise HTTPException(409, "Jogging is only available while the printer is idle")
+    snapshot = (client.state.raw_data.get("provider_snapshot") or {}).get("motion") or {}
+    homed_axes = set(snapshot.get("homed_axes") or [])
+    if body.axis.lower() in {"x", "y", "z"} and body.axis.lower() not in homed_axes:
+        raise HTTPException(409, f"The {body.axis.upper()} axis must be homed before jogging")
+    if body.axis == "E" and _float_for_route(client.state.temperatures.get("nozzle")) < 170:
+        raise HTTPException(409, "The active nozzle must be at least 170°C before extruder jogging")
+    if not client.jog(body.axis, body.distance, body.speed):
+        raise HTTPException(400, "Moonraker rejected the jog command")
+    logger.info("KLIPPER AUDIT: printer=%s action=jog axis=%s", printer_id, body.axis)
+    return {"success": True}
+
+
+@router.post("/{printer_id}/klipper/level")
+async def level_klipper_gantry(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if client.state.state != "IDLE":
+        raise HTTPException(409, "Gantry leveling is only available while the printer is idle")
+    if not client.level_gantry():
+        raise HTTPException(400, "No supported gantry leveling object was discovered")
+    logger.info("KLIPPER AUDIT: printer=%s action=gantry_level", printer_id)
+    return {"success": True}
+
+
+@router.post("/{printer_id}/klipper/bed-mesh-calibrate")
+async def calibrate_klipper_bed_mesh(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if client.state.state != "IDLE":
+        raise HTTPException(409, "Bed mesh calibration is only available while the printer is idle")
+    if not client.calibrate_bed_mesh():
+        raise HTTPException(400, "Bed mesh support was not discovered")
+    logger.info("KLIPPER AUDIT: printer=%s action=bed_mesh_calibrate", printer_id)
+    return {"success": True}
+
+
+@router.post("/{printer_id}/klipper/tools/{tool_id}/select")
+async def select_klipper_tool(
+    printer_id: int,
+    tool_id: str,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    _, client = await _require_klipper_client(printer_id, db)
+    if not client.select_tool(tool_id):
+        raise HTTPException(409, "Tool selection requires an idle, fully homed, ready toolchanger")
+    logger.info("KLIPPER AUDIT: printer=%s action=select_tool tool=%s", printer_id, tool_id)
+    return {"success": True}
 
 
 @router.get("/{printer_id}/overlay-status")
@@ -1089,8 +1430,11 @@ async def disconnect_printer(
 @router.post("/test")
 async def test_printer_connection(
     ip_address: str,
-    serial_number: str,
-    access_code: str,
+    serial_number: str | None = None,
+    access_code: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    connection_port: int | None = Query(default=None, ge=1, le=65535),
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
 ):
     """Test connection to a printer without saving."""
@@ -1098,6 +1442,9 @@ async def test_printer_connection(
         ip_address=ip_address,
         serial_number=serial_number,
         access_code=access_code,
+        provider=provider,
+        model=model,
+        connection_port=connection_port,
     )
     return result
 
@@ -1214,6 +1561,13 @@ async def get_printer_cover(
     subtask_name = state.subtask_name
     if not subtask_name:
         raise HTTPException(404, f"No subtask_name in printer state (state={state.state})")
+
+    if provider_for_printer(printer) == PROVIDER_KLIPPER:
+        image = await provider_get_printer_thumbnail(printer, state.gcode_file or subtask_name)
+        if not image:
+            raise HTTPException(404, f"No cover available for '{subtask_name}'")
+        image_data, media_type = image
+        return Response(content=image_data, media_type=media_type)
 
     if _is_flashforge_printer(printer):
         cache_key = (subtask_name, view or "default")
@@ -1549,18 +1903,12 @@ async def list_printer_files(
     """List files on the printer at the specified path."""
     printer = await _load_printer_or_404(printer_id)
 
-    files = await list_files_async(
-        printer.ip_address,
-        printer.access_code,
-        path,
-        printer_model=printer.model,
-        serial_number=printer.serial_number,
-    )
+    files = await provider_list_printer_files(printer, path)
 
     # Add full path to each file
     for f in files:
         f["path"] = f"{path.rstrip('/')}/{f['name']}" if path != "/" else f"/{f['name']}"
-        if _is_flashforge_printer(printer) and not f.get("is_directory"):
+        if provider_for_printer(printer) in {PROVIDER_FLASHFORGE, PROVIDER_KLIPPER} and not f.get("is_directory"):
             f["thumbnail_url"] = f"/api/v1/printers/{printer_id}/files/thumbnail?path={quote(f['path'])}"
 
     if _is_flashforge_printer(printer):
@@ -1599,13 +1947,7 @@ async def download_printer_file(
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose file downloads")
 
-    data = await download_file_bytes_async(
-        printer.ip_address,
-        printer.access_code,
-        path,
-        printer_model=printer.model,
-        serial_number=printer.serial_number,
-    )
+    data = await provider_download_printer_file(printer, path)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -1647,13 +1989,7 @@ async def get_printer_file_gcode(
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose G-code downloads")
 
-    data = await download_file_bytes_async(
-        printer.ip_address,
-        printer.access_code,
-        path,
-        printer_model=printer.model,
-        serial_number=printer.serial_number,
-    )
+    data = await provider_download_printer_file(printer, path)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -1688,6 +2024,13 @@ async def get_printer_file_thumbnail(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+
+    if provider_for_printer(printer) == PROVIDER_KLIPPER:
+        image = await provider_get_printer_thumbnail(printer, path)
+        if not image:
+            raise HTTPException(404, f"No thumbnail available for: {path}")
+        image_data, media_type = image
+        return Response(content=image_data, media_type=media_type)
 
     if not _is_flashforge_printer(printer):
         raise HTTPException(501, "This printer does not expose generic file thumbnails")
@@ -1732,13 +2075,7 @@ async def get_printer_file_plates(
             "is_multi_plate": False,
         }
 
-    data = await download_file_bytes_async(
-        printer.ip_address,
-        printer.access_code,
-        path,
-        printer_model=printer.model,
-        serial_number=printer.serial_number,
-    )
+    data = await provider_download_printer_file(printer, path)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -1968,13 +2305,7 @@ async def get_printer_file_plate_thumbnail(
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose 3MF plate thumbnails")
 
-    data = await download_file_bytes_async(
-        printer.ip_address,
-        printer.access_code,
-        path,
-        printer_model=printer.model,
-        serial_number=printer.serial_number,
-    )
+    data = await provider_download_printer_file(printer, path)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -2013,13 +2344,7 @@ async def download_printer_files_as_zip(
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in paths:
             try:
-                data = await download_file_bytes_async(
-                    printer.ip_address,
-                    printer.access_code,
-                    path,
-                    printer_model=printer.model,
-                    serial_number=printer.serial_number,
-                )
+                data = await provider_download_printer_file(printer, path)
                 if data:
                     filename = path.split("/")[-1]
                     zf.writestr(filename, data)
@@ -2054,13 +2379,7 @@ async def delete_printer_file(
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose file deletion")
 
-    result = await delete_file_async(
-        printer.ip_address,
-        printer.access_code,
-        path,
-        printer_model=printer.model,
-        serial_number=printer.serial_number,
-    )
+    result = await provider_delete_printer_file(printer, path)
     if result == DeleteResult.NOT_FOUND:
         raise HTTPException(404, f"File not found on printer: {path}")
     if result == DeleteResult.FAILED:
@@ -2077,12 +2396,7 @@ async def get_printer_storage(
     """Get storage information from the printer."""
     printer = await _load_printer_or_404(printer_id)
 
-    storage_info = await get_storage_info_async(
-        printer.ip_address,
-        printer.access_code,
-        printer_model=printer.model,
-        serial_number=printer.serial_number,
-    )
+    storage_info = await provider_get_printer_storage(printer)
 
     return storage_info or {"used_bytes": None, "free_bytes": None}
 
@@ -2199,6 +2513,7 @@ async def start_drying(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Filament drying")
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose filament drying control")
 
@@ -2278,6 +2593,7 @@ async def stop_drying(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Filament drying")
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose filament drying control")
 
@@ -2320,6 +2636,7 @@ async def set_print_option(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu AI print options")
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose AI print option control")
 
@@ -2378,6 +2695,7 @@ async def set_ams_backup(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "AMS backup")
 
     client = printer_manager.get_client(printer_id)
     if not client or not client.state.connected:
@@ -2447,6 +2765,7 @@ async def start_calibration(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu calibration")
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose calibration control")
 
@@ -2674,6 +2993,12 @@ async def configure_ams_slot(
     logger.info(
         f"[configure_ams_slot] setting_id={setting_id!r}, kprofile_filament_id={kprofile_filament_id!r}, kprofile_setting_id={kprofile_setting_id!r}"
     )
+
+    printer_result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = printer_result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "AMS configuration")
 
     # Get MQTT client for this printer
     client = printer_manager.get_client(printer_id)
@@ -3036,6 +3361,12 @@ async def reset_ams_slot(
 
     This clears the filament configuration from the slot.
     """
+    printer_result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = printer_result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "AMS configuration")
+
     # Get MQTT client for this printer
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -3362,6 +3693,7 @@ async def set_print_speed(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu print-speed modes")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -3442,6 +3774,7 @@ async def set_chamber_temperature(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu chamber heating")
 
     if not supports_chamber_heater(printer.model):
         raise HTTPException(400, f"Model {printer.model or 'unknown'} does not have an active chamber heater")
@@ -3475,6 +3808,7 @@ async def set_fan_speed(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu fan controls")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -3501,6 +3835,7 @@ async def select_extruder(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu extruder selection")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -3528,6 +3863,7 @@ async def set_airduct_mode(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu airduct control")
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose airduct mode control")
 
@@ -3554,6 +3890,7 @@ async def set_chamber_light(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu chamber-light control")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -3668,6 +4005,7 @@ async def bed_jog(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu bed jogging")
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose Z jog control")
 
@@ -3706,6 +4044,7 @@ async def xy_jog(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu XY jogging")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -3748,6 +4087,7 @@ async def extruder_jog(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu extruder jogging")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -3799,7 +4139,11 @@ async def home_axes(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    if not client.send_gcode("G28"):
+    if provider_for_printer(printer) == PROVIDER_KLIPPER:
+        success = isinstance(client, MoonrakerClient) and client.home_axes("XYZ")
+    else:
+        success = client.send_gcode("G28")
+    if not success:
         raise HTTPException(500, "Failed to send home command")
 
     return {"success": True, "message": "Full auto-home sequence sent"}
@@ -3816,6 +4160,7 @@ async def clear_hms_errors(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu HMS controls")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -3847,6 +4192,7 @@ async def get_printable_objects(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu object skipping")
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose object skipping")
 
@@ -3964,6 +4310,7 @@ async def skip_objects(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu object skipping")
     if _is_flashforge_printer(printer):
         raise HTTPException(501, "FlashForge local API does not expose object skipping")
 
@@ -4017,6 +4364,7 @@ async def refresh_ams_slot(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "AMS RFID refresh")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -4278,6 +4626,7 @@ async def ams_load(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "AMS filament loading")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -4307,6 +4656,7 @@ async def ams_unload(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "AMS filament unloading")
 
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -4365,6 +4715,7 @@ async def execute_hms_action(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    _reject_klipper_legacy_route(printer, "Bambu HMS actions")
 
     client = printer_manager.get_client(printer_id)
     if not client:

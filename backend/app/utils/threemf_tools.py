@@ -867,6 +867,42 @@ def inject_gcode_into_3mf(
         return None
 
 
+def extract_plate_gcode_to_temp(source_path: Path, plate_id: int = 1) -> Path:
+    """Extract one plate's embedded G-code for providers that print raw files.
+
+    Moonraker cannot start Bambuddy's ``.gcode.3mf`` library artifact directly,
+    but retaining that artifact is valuable for thumbnails and metadata.  The
+    queue calls this immediately before upload and removes the returned file
+    after the dispatch transition.
+    """
+    import tempfile
+
+    if plate_id < 1:
+        raise ValueError("Plate ID must be positive")
+    temp_path: Path | None = None
+    try:
+        with zipfile.ZipFile(source_path, "r") as archive:
+            candidates = [name for name in archive.namelist() if name.lower().endswith(".gcode")]
+            target = next((name for name in candidates if name.endswith(f"plate_{plate_id}.gcode")), None)
+            if target is None:
+                if len(candidates) != 1:
+                    raise ValueError(f"Plate {plate_id} G-code was not found in the 3MF")
+                target = candidates[0]
+            info = archive.getinfo(target)
+            if info.file_size > 2 * 1024 * 1024 * 1024:
+                raise ValueError("Embedded G-code exceeds the supported 2 GiB limit")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".gcode") as temporary:
+                temp_path = Path(temporary.name)
+                with archive.open(info) as source:
+                    while chunk := source.read(1024 * 1024):
+                        temporary.write(chunk)
+        return temp_path
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
 def extract_project_filaments_from_3mf(zf: zipfile.ZipFile) -> list[dict]:
     """Project-wide AMS slot config from ``Metadata/project_settings.config``.
 

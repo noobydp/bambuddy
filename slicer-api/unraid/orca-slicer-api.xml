@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>orca-slicer-api</Name>
+  <Repository>ghcr.io/maziggy/orca-slicer-api:bambuddy-0.2.5</Repository>
+  <Registry>https://github.com/maziggy/orca-slicer-api/pkgs/container/orca-slicer-api</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://wiki.bambuddy.cool/features/slicer-api/</Support>
+  <Project>https://github.com/maziggy/orca-slicer-api</Project>
+  <Overview>Optional OrcaSlicer companion for Bambuddy. Klipper support and pre-sliced G-code work without it; install this only for server-side slicing.</Overview>
+  <Category>Productivity: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:3003]/health</WebUI>
+  <Icon>https://raw.githubusercontent.com/maziggy/bambuddy/main/icons/icon.png</Icon>
+  <ExtraParams>--health-cmd="curl -f http://localhost:3000/health || exit 1" --health-interval=30s --health-timeout=5s --health-start-period=10s --health-retries=3</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>0</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>amd64 host. In Bambuddy, enable Settings &gt; Slicer &gt; Use Slicer API and set the URL to http://YOUR-UNRAID-IP:3003.</Requires>
+  <Config Name="API Port" Target="3000" Default="3003" Mode="tcp" Description="Host port for the OrcaSlicer API. Bambuddy defaults to port 3003." Type="Port" Display="always" Required="true" Mask="false">3003</Config>
+  <Config Name="Persistent Data" Target="/app/data" Default="/mnt/user/appdata/orca-slicer-api" Mode="rw" Description="Persistent slicer data and imported profile bundles." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/orca-slicer-api</Config>
+  <Config Name="Node Environment" Target="NODE_ENV" Default="production" Mode="" Description="Node runtime mode." Type="Variable" Display="advanced" Required="true" Mask="false">production</Config>
+  <Config Name="Internal Port" Target="PORT" Default="3000" Mode="" Description="Internal HTTP port. Do not change unless the image changes." Type="Variable" Display="advanced" Required="true" Mask="false">3000</Config>
+</Container>

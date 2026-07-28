@@ -1,0 +1,116 @@
+{
+  "server_info": {
+    "hostname": "trident",
+    "moonraker_version": "v0.10.0-20"
+  },
+  "printer_info": {
+    "state": "ready",
+    "software_version": "v0.13.0-688"
+  },
+  "objects": [
+    "webhooks",
+    "print_stats",
+    "virtual_sdcard",
+    "display_status",
+    "toolhead",
+    "gcode_move",
+    "configfile",
+    "bed_mesh",
+    "quad_gantry_level",
+    "extruder",
+    "heater_bed",
+    "fan",
+    "controller_fan electronics",
+    "filament_switch_sensor toolhead",
+    "temperature_host raspberry_pi",
+    "mcu",
+    "mcu toolboard",
+    "mcu cartographer",
+    "gcode_macro PRINT_START",
+    "gcode_macro CLEAN_NOZZLE"
+  ],
+  "webcams": [
+    {
+      "name": "Trident",
+      "enabled": true,
+      "snapshot_url": "/webcam/snapshot",
+      "stream_url": "/webcam/stream"
+    }
+  ],
+  "status": {
+    "print_stats": {
+      "state": "standby",
+      "filename": "",
+      "print_duration": 0,
+      "info": {
+        "current_layer": 0,
+        "total_layer": 0
+      }
+    },
+    "virtual_sdcard": {
+      "progress": 0,
+      "file_path": ""
+    },
+    "display_status": {
+      "progress": 0
+    },
+    "toolhead": {
+      "position": [212.0, 208.0, 40.0, 0.0],
+      "homed_axes": "",
+      "extruder": "extruder"
+    },
+    "gcode_move": {
+      "gcode_position": [212.0, 208.0, 40.0, 0.0],
+      "speed_factor": 0.9,
+      "extrude_factor": 1.05
+    },
+    "configfile": {
+      "settings": {
+        "printer": {
+          "kinematics": "corexy"
+        },
+        "stepper_x": {
+          "position_max": 424
+        },
+        "stepper_y": {
+          "position_max": 416
+        },
+        "stepper_z": {
+          "position_max": 360
+        }
+      }
+    },
+    "bed_mesh": {
+      "profile_name": ""
+    },
+    "extruder": {
+      "temperature": 23.8,
+      "target": 0
+    },
+    "heater_bed": {
+      "temperature": 22.9,
+      "target": 0
+    },
+    "fan": {
+      "speed": 0
+    },
+    "controller_fan electronics": {
+      "speed": 0.4
+    },
+    "filament_switch_sensor toolhead": {
+      "filament_detected": true
+    },
+    "temperature_host raspberry_pi": {
+      "temperature": 44.6
+    },
+    "mcu": {
+      "mcu_version": "v0.13"
+    },
+    "mcu toolboard": {
+      "mcu_version": "v0.13"
+    },
+    "mcu cartographer": {
+      "mcu_version": "v0.13"
+    }
+  }
+}

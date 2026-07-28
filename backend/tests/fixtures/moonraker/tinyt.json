@@ -1,0 +1,134 @@
+{
+  "server_info": {
+    "hostname": "tinyt",
+    "moonraker_version": "v0.10.0-29"
+  },
+  "printer_info": {
+    "state": "ready",
+    "software_version": "v0.13.0-689"
+  },
+  "objects": [
+    "webhooks",
+    "print_stats",
+    "virtual_sdcard",
+    "display_status",
+    "toolhead",
+    "gcode_move",
+    "configfile",
+    "bed_mesh",
+    "z_tilt",
+    "toolchanger",
+    "extruder",
+    "extruder1",
+    "fan",
+    "fan_generic chamber",
+    "filament_switch_sensor toolhead_T0",
+    "filament_switch_sensor toolhead_T1",
+    "temperature_host raspberry_pi",
+    "mcu",
+    "mcu toolboard_t0",
+    "mcu toolboard_t1",
+    "tool T0",
+    "tool T1",
+    "gcode_macro PRINT_START",
+    "gcode_macro PARK",
+    "gcode_macro _INTERNAL_HELPER"
+  ],
+  "webcams": [
+    {
+      "name": "TinyT",
+      "enabled": true,
+      "snapshot_url": "/webcam/snapshot",
+      "stream_url": "/webcam/stream"
+    }
+  ],
+  "status": {
+    "print_stats": {
+      "state": "standby",
+      "filename": "",
+      "print_duration": 0,
+      "info": {
+        "current_layer": 0,
+        "total_layer": 0
+      }
+    },
+    "virtual_sdcard": {
+      "progress": 0,
+      "file_path": ""
+    },
+    "display_status": {
+      "progress": 0
+    },
+    "toolhead": {
+      "position": [84.5, 86.25, 20.0, 0.0],
+      "homed_axes": "xyz",
+      "extruder": "extruder"
+    },
+    "gcode_move": {
+      "gcode_position": [84.5, 86.25, 20.0, 0.0],
+      "speed_factor": 1.0,
+      "extrude_factor": 1.0
+    },
+    "configfile": {
+      "settings": {
+        "printer": {
+          "kinematics": "corexy"
+        },
+        "stepper_x": {
+          "position_max": 169.2
+        },
+        "stepper_y": {
+          "position_max": 172.5
+        },
+        "stepper_z": {
+          "position_max": 125
+        }
+      }
+    },
+    "bed_mesh": {
+      "profile_name": "default"
+    },
+    "toolchanger": {
+      "status": "ready",
+      "tool": "T0"
+    },
+    "tool T0": {
+      "status": "active"
+    },
+    "tool T1": {
+      "status": "ready"
+    },
+    "extruder": {
+      "temperature": 24.1,
+      "target": 0
+    },
+    "extruder1": {
+      "temperature": 24.4,
+      "target": 0
+    },
+    "fan": {
+      "speed": 0
+    },
+    "fan_generic chamber": {
+      "speed": 0.25
+    },
+    "filament_switch_sensor toolhead_T0": {
+      "filament_detected": true
+    },
+    "filament_switch_sensor toolhead_T1": {
+      "filament_detected": false
+    },
+    "temperature_host raspberry_pi": {
+      "temperature": 47.2
+    },
+    "mcu": {
+      "mcu_version": "v0.13"
+    },
+    "mcu toolboard_t0": {
+      "mcu_version": "v0.13"
+    },
+    "mcu toolboard_t1": {
+      "mcu_version": "v0.13"
+    }
+  }
+}

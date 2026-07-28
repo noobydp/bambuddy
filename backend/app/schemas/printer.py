@@ -1,15 +1,15 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class PrinterBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    serial_number: str = Field(..., min_length=1, max_length=50)
+    serial_number: str | None = Field(default=None, max_length=50)
 
     @field_validator("serial_number")
     @classmethod
-    def _normalize_serial_number(cls, v: str) -> str:
+    def _normalize_serial_number(cls, v: str | None) -> str | None:
         """Uppercase and trim the serial number.
 
         Bambu serial numbers are uppercase alphanumeric, and the MQTT report
@@ -19,9 +19,11 @@ class PrinterBase(BaseModel):
         the correctly-cased topic, so every status field stays unknown (#1465).
         Normalising on input makes the subscribed topic always match.
         """
+        if v is None:
+            return None
         normalized = v.strip().upper()
         if not normalized:
-            raise ValueError("serial_number must not be blank")
+            return None
         return normalized
 
     ip_address: str = Field(
@@ -30,7 +32,10 @@ class PrinterBase(BaseModel):
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
     provider: str | None = None
+    connection_port: int | None = Field(default=None, ge=1, le=65535)
     model: str | None = None
+    slicer_preset_source: str | None = Field(default=None, max_length=30)
+    slicer_preset_id: str | None = Field(default=None, max_length=255)
     location: str | None = None  # Group/location name
     auto_archive: bool = True
     external_camera_url: str | None = None
@@ -44,7 +49,18 @@ class PrinterCreate(PrinterBase):
     # access_code lives on the input shapes only — never on the default
     # PrinterResponse. Direct exposure on PRINTERS_READ would let a Viewer
     # connect to the printer's MQTT and bypass Bambuddy's RBAC.
-    access_code: str = Field(..., min_length=1, max_length=20)
+    access_code: str | None = Field(default="", max_length=255)
+
+    @model_validator(mode="after")
+    def _validate_provider_credentials(self) -> "PrinterCreate":
+        provider = (self.provider or "bambu").strip().lower()
+        if provider != "klipper":
+            if not self.serial_number:
+                raise ValueError("serial_number is required for this printer provider")
+            if not (self.access_code or "").strip():
+                raise ValueError("access_code is required for this printer provider")
+        self.access_code = (self.access_code or "").strip()
+        return self
 
 
 class PlateDetectionROI(BaseModel):
@@ -63,9 +79,12 @@ class PrinterUpdate(BaseModel):
         max_length=253,
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
-    access_code: str | None = None
+    access_code: str | None = Field(default=None, max_length=255)
     provider: str | None = None
+    connection_port: int | None = Field(default=None, ge=1, le=65535)
     model: str | None = None
+    slicer_preset_source: str | None = Field(default=None, max_length=30)
+    slicer_preset_id: str | None = Field(default=None, max_length=255)
     location: str | None = None
     is_active: bool | None = None
     auto_archive: bool | None = None
@@ -106,7 +125,10 @@ class PrinterResponse(PrinterBase):
             "serial_number": printer.serial_number,
             "ip_address": printer.ip_address,
             "provider": printer.provider,
+            "connection_port": printer.connection_port,
             "model": printer.model,
+            "slicer_preset_source": printer.slicer_preset_source,
+            "slicer_preset_id": printer.slicer_preset_id,
             "location": printer.location,
             "auto_archive": printer.auto_archive,
             "external_camera_url": printer.external_camera_url,
@@ -319,6 +341,15 @@ class PrinterCapabilities(BaseModel):
     can_update_firmware: bool = False
     can_virtual_printer: bool = False
     can_manage_material_system: bool = False
+    can_set_fan: bool = False
+    can_set_speed_factor: bool = False
+    can_set_flow_factor: bool = False
+    can_jog_axes: bool = False
+    can_level_gantry: bool = False
+    can_calibrate_bed_mesh: bool = False
+    can_select_tool: bool = False
+    can_run_gcode: bool = False
+    can_emergency_stop: bool = False
     unsupported_reasons: dict[str, str] = Field(default_factory=dict)
 
 
@@ -351,6 +382,24 @@ class PrinterFanStatus(BaseModel):
     controllable: bool = False
 
 
+class PrinterSensorStatus(BaseModel):
+    id: str
+    label: str
+    kind: str
+    value: str | float | bool | None = None
+    unit: str | None = None
+    triggered: bool | None = None
+
+
+class PrinterMotionStatus(BaseModel):
+    position: dict[str, float] = Field(default_factory=dict)
+    homed_axes: list[str] = Field(default_factory=list)
+    speed_factor_percent: int | None = None
+    flow_factor_percent: int | None = None
+    kinematics: str | None = None
+    leveling_method: str | None = None
+
+
 class MaterialSlotStatus(BaseModel):
     id: int
     label: str
@@ -380,6 +429,11 @@ class PrinterDeviceInfo(BaseModel):
     auto_shutdown: bool | None = None
     auto_shutdown_minutes: int | None = None
     remaining_disk_gb: float | None = None
+    hostname: str | None = None
+    moonraker_version: str | None = None
+    klipper_version: str | None = None
+    kinematics: str | None = None
+    mcu_count: int | None = None
 
 
 class PrinterStatus(BaseModel):
@@ -489,6 +543,8 @@ class PrinterStatus(BaseModel):
     tools: list[PrinterToolStatus] = Field(default_factory=list)
     heaters: list[PrinterHeaterStatus] = Field(default_factory=list)
     fans: list[PrinterFanStatus] = Field(default_factory=list)
+    sensors: list[PrinterSensorStatus] = Field(default_factory=list)
+    motion: PrinterMotionStatus | None = None
     material_systems: list[MaterialSystemStatus] = Field(default_factory=list)
     device_info: PrinterDeviceInfo | None = None
     # Linked archive for the active print (resolved via subtask_id). Frontend uses
@@ -499,6 +555,51 @@ class PrinterStatus(BaseModel):
     # Set for every active print regardless of plate count; the frontend decides
     # whether to render it based on current_archive_id's is_multi_plate flag.
     current_plate_id: int | None = None
+
+
+class KlipperMacroBody(BaseModel):
+    parameters: str = Field(default="", max_length=2048)
+
+    @field_validator("parameters")
+    @classmethod
+    def _single_line_parameters(cls, value: str) -> str:
+        if "\n" in value or "\r" in value or "\x00" in value:
+            raise ValueError("Macro parameters must be a single line")
+        return value.strip()
+
+
+class KlipperGcodeBody(BaseModel):
+    script: str = Field(..., min_length=1, max_length=4096)
+    danger_acknowledged: bool = False
+
+    @field_validator("script")
+    @classmethod
+    def _valid_script(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("G-code contains an invalid character")
+        return value.strip()
+
+
+class KlipperEmergencyStopBody(BaseModel):
+    confirmation: str = Field(..., max_length=32)
+
+
+class KlipperTemperatureBody(BaseModel):
+    target: int = Field(..., ge=0, le=500)
+
+
+class KlipperFanBody(BaseModel):
+    speed_percent: int = Field(..., ge=0, le=100)
+
+
+class KlipperFactorBody(BaseModel):
+    percent: int
+
+
+class KlipperJogBody(BaseModel):
+    axis: str = Field(..., pattern=r"^[XYZE]$")
+    distance: float = Field(..., ge=-50, le=50)
+    speed: int = Field(default=3000, ge=1, le=30000)
 
 
 class DiagnosticCheck(BaseModel):

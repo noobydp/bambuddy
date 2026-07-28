@@ -37,12 +37,14 @@ from backend.app.schemas.print_queue import (
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.filament_requirements import overrides_for_plate
 from backend.app.services.notification_service import notification_service
+from backend.app.services.printer_providers import PROVIDER_KLIPPER, provider_for_printer
 from backend.app.utils.printer_models import (
     is_gcode_compatible,
     normalize_printer_model,
     normalize_printer_model_id,
 )
 from backend.app.utils.threemf_tools import (
+    extract_embedded_presets_from_3mf,
     extract_plate_metadata_from_3mf,
     extract_print_time_from_3mf,
 )
@@ -133,6 +135,37 @@ async def _resolve_source_path(db: AsyncSession, item: PrintQueueItem) -> Path |
             lib_path = Path(library_file.file_path)
             return lib_path if lib_path.is_absolute() else settings.base_dir / library_file.file_path
     return None
+
+
+def _validate_klipper_queue_source(
+    printer: Printer,
+    source_name: str,
+    source_path: Path | None,
+    *,
+    raw_gcode_acknowledged: bool,
+) -> None:
+    """Require an exact preset match, or an explicit warning for raw G-code."""
+    if source_name.lower().endswith(".gcode"):
+        if not raw_gcode_acknowledged:
+            raise HTTPException(
+                409,
+                "Raw G-code has no verifiable printer profile. Confirm compatibility and select this printer manually.",
+            )
+        return
+    if not printer.slicer_preset_id:
+        raise HTTPException(400, "Link an Orca printer preset to this Klipper printer before queueing")
+    embedded = None
+    if source_path is not None:
+        try:
+            with zipfile.ZipFile(source_path, "r") as archive_zip:
+                embedded = extract_embedded_presets_from_3mf(archive_zip).get("printer")
+        except (OSError, zipfile.BadZipFile):
+            pass
+    if not embedded or embedded.strip() != printer.slicer_preset_id.strip():
+        raise HTTPException(
+            400,
+            f"File profile {embedded or 'unknown'} does not exactly match {printer.slicer_preset_id}",
+        )
 
 
 def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
@@ -389,9 +422,11 @@ async def add_to_queue(
         raise HTTPException(400, "Cannot specify both printer_id and target_model")
 
     # Validate printer exists (if assigned)
+    printer_row = None
     if data.printer_id is not None:
         result = await db.execute(select(Printer).where(Printer.id == data.printer_id))
-        if not result.scalar_one_or_none():
+        printer_row = result.scalar_one_or_none()
+        if not printer_row:
             raise HTTPException(400, "Printer not found")
 
     # Validate target_model has active printers
@@ -399,8 +434,14 @@ async def add_to_queue(
         result = await db.execute(
             select(Printer).where(Printer.model == target_model_norm).where(Printer.is_active == True)  # noqa: E712
         )
-        if not result.scalars().first():
+        candidate_printers = list(result.scalars().all())
+        if not candidate_printers:
             raise HTTPException(400, f"No active printers for model: {target_model_norm}")
+        if any(provider_for_printer(printer) == PROVIDER_KLIPPER for printer in candidate_printers):
+            raise HTTPException(
+                400,
+                "Klipper jobs must target an exact printer and linked Orca printer preset",
+            )
 
     # Validate archive exists (if provided) and get it for filament extraction
     archive = None
@@ -462,6 +503,22 @@ async def add_to_queue(
             validate_print_filename(library_file.filename)
         except InvalidFilenameError as e:
             raise HTTPException(400, str(e)) from e
+
+    if printer_row is not None and provider_for_printer(printer_row) == PROVIDER_KLIPPER:
+        source_name = archive.filename if archive else library_file.filename if library_file else ""
+        if archive:
+            source_path = settings.base_dir / archive.file_path
+        else:
+            source_path_value = Path(library_file.file_path)
+            source_path = (
+                source_path_value if source_path_value.is_absolute() else settings.base_dir / library_file.file_path
+            )
+        _validate_klipper_queue_source(
+            printer_row,
+            source_name,
+            source_path,
+            raw_gcode_acknowledged=data.klipper_compatibility_acknowledged,
+        )
 
     # Cross-model safety gate (#2578): a G-code 3MF sliced for one model must
     # not be queued for dispatch to an incompatible model. The UI can no longer
@@ -671,6 +728,7 @@ async def add_to_queue(
             preheat_chamber_target_override=data.preheat_chamber_target_override,
             gcode_injection=data.gcode_injection,
             cleanup_library_after_dispatch=data.cleanup_library_after_dispatch,
+            klipper_compatibility_acknowledged=data.klipper_compatibility_acknowledged,
             project_id=data.project_id,
             position=start_position + i,
             status="pending",
@@ -763,8 +821,14 @@ async def bulk_update_queue_items(
     # Validate printer_id if being changed
     if "printer_id" in update_data and update_data["printer_id"] is not None:
         result = await db.execute(select(Printer).where(Printer.id == update_data["printer_id"]))
-        if not result.scalar_one_or_none():
+        bulk_printer = result.scalar_one_or_none()
+        if not bulk_printer:
             raise HTTPException(400, "Printer not found")
+        if provider_for_printer(bulk_printer) == PROVIDER_KLIPPER:
+            raise HTTPException(
+                400,
+                "Klipper jobs must be assigned individually so file compatibility can be confirmed",
+            )
 
     # Fetch all items
     result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.id.in_(data.item_ids)))
@@ -1094,6 +1158,7 @@ async def update_queue_item(
         raise HTTPException(409, "Item is being dispatched — cancel it first to make changes")
 
     update_data = data.model_dump(exclude_unset=True)
+    klipper_compatibility_acknowledged = bool(update_data.pop("klipper_compatibility_acknowledged", False))
 
     # Normalize target_model if being updated
     if "target_model" in update_data and update_data["target_model"]:
@@ -1110,9 +1175,12 @@ async def update_queue_item(
         raise HTTPException(400, "Cannot specify both printer_id and target_model")
 
     # Validate new printer_id if being changed (and not None)
+    new_printer = None
+    if new_printer_id is not None:
+        result = await db.execute(select(Printer).where(Printer.id == new_printer_id))
+        new_printer = result.scalar_one_or_none()
     if "printer_id" in update_data and update_data["printer_id"] is not None:
-        result = await db.execute(select(Printer).where(Printer.id == update_data["printer_id"]))
-        if not result.scalar_one_or_none():
+        if not new_printer:
             raise HTTPException(400, "Printer not found")
 
     # Validate target_model has active printers
@@ -1120,8 +1188,14 @@ async def update_queue_item(
         result = await db.execute(
             select(Printer).where(Printer.model == update_data["target_model"]).where(Printer.is_active == True)  # noqa: E712
         )
-        if not result.scalars().first():
+        candidate_printers = list(result.scalars().all())
+        if not candidate_printers:
             raise HTTPException(400, f"No active printers for model: {update_data['target_model']}")
+        if any(provider_for_printer(printer) == PROVIDER_KLIPPER for printer in candidate_printers):
+            raise HTTPException(
+                400,
+                "Klipper jobs must target an exact printer and linked Orca printer preset",
+            )
 
         # Cross-model safety gate (#2578) — same check as the create route, so
         # a mismatched target can't be introduced by editing either.
@@ -1139,6 +1213,28 @@ async def update_queue_item(
                 400,
                 f"File was sliced for {sliced_for} and cannot be dispatched to {update_data['target_model']} printers",
             )
+
+    assigning_klipper = (
+        "printer_id" in update_data
+        and new_printer_id != item.printer_id
+        and new_printer is not None
+        and provider_for_printer(new_printer) == PROVIDER_KLIPPER
+    )
+    if assigning_klipper:
+        source_path = await _resolve_source_path(db, item)
+        if item.archive_id:
+            result = await db.execute(select(PrintArchive.filename).where(PrintArchive.id == item.archive_id))
+            source_name = result.scalar_one_or_none() or ""
+        else:
+            result = await db.execute(select(LibraryFile.filename).where(LibraryFile.id == item.library_file_id))
+            source_name = result.scalar_one_or_none() or ""
+        _validate_klipper_queue_source(
+            new_printer,
+            source_name,
+            source_path,
+            raw_gcode_acknowledged=klipper_compatibility_acknowledged,
+        )
+        update_data["klipper_compatibility_acknowledged"] = klipper_compatibility_acknowledged
 
     # Serialize ams_mapping to JSON for TEXT column storage
     if "ams_mapping" in update_data:

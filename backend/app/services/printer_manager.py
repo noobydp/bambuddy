@@ -14,8 +14,14 @@ from backend.app.services.flashforge_local import (
     is_flashforge_model,
     probe_flashforge_connection,
 )
+from backend.app.services.moonraker import (
+    DEFAULT_MOONRAKER_PORT,
+    MoonrakerClient,
+    probe_moonraker_connection,
+)
 from backend.app.services.printer_providers import (
     PROVIDER_FLASHFORGE,
+    PROVIDER_KLIPPER,
     normalize_printer_provider,
     provider_for_printer,
 )
@@ -343,7 +349,7 @@ class PrinterManager:
     """Manager for multiple printer connections."""
 
     def __init__(self):
-        self._clients: dict[int, BambuMQTTClient | FlashForgeLocalClient] = {}
+        self._clients: dict[int, BambuMQTTClient | FlashForgeLocalClient | MoonrakerClient] = {}
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._providers: dict[int, str] = {}
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
@@ -630,6 +636,16 @@ class PrinterManager:
                 on_print_start=on_print_start,
                 on_print_complete=on_print_complete,
             )
+        elif provider == PROVIDER_KLIPPER:
+            client = MoonrakerClient(
+                ip_address=printer.ip_address,
+                port=printer.connection_port or DEFAULT_MOONRAKER_PORT,
+                api_key=printer.access_code,
+                model=printer.model,
+                on_state_change=on_state_change,
+                on_print_start=on_print_start,
+                on_print_complete=on_print_complete,
+            )
         else:
             client = BambuMQTTClient(
                 ip_address=printer.ip_address,
@@ -732,7 +748,7 @@ class PrinterManager:
             return client.check_staleness()
         return False
 
-    def get_client(self, printer_id: int) -> BambuMQTTClient | FlashForgeLocalClient | None:
+    def get_client(self, printer_id: int) -> BambuMQTTClient | FlashForgeLocalClient | MoonrakerClient | None:
         """Get the active provider client for a printer."""
         return self._clients.get(printer_id)
 
@@ -920,10 +936,11 @@ class PrinterManager:
     async def test_connection(
         self,
         ip_address: str,
-        serial_number: str,
-        access_code: str,
+        serial_number: str | None,
+        access_code: str | None,
         model: str | None = None,
         provider: str | None = None,
+        connection_port: int | None = None,
     ) -> dict:
         """Test connection to a printer without persisting.
 
@@ -935,13 +952,20 @@ class PrinterManager:
         original synchronous teardown produced the #1445 "Docker container
         hangs" symptom on P1S when called from POST /printers/.
         """
-        if normalize_printer_provider(provider, model) == PROVIDER_FLASHFORGE:
-            return await probe_flashforge_connection(ip_address, serial_number, access_code)
+        normalized_provider = normalize_printer_provider(provider, model)
+        if normalized_provider == PROVIDER_FLASHFORGE:
+            return await probe_flashforge_connection(ip_address, serial_number or "", access_code or "")
+        if normalized_provider == PROVIDER_KLIPPER:
+            return await probe_moonraker_connection(
+                ip_address,
+                connection_port or DEFAULT_MOONRAKER_PORT,
+                access_code,
+            )
 
         client = BambuMQTTClient(
             ip_address=ip_address,
-            serial_number=serial_number,
-            access_code=access_code,
+            serial_number=serial_number or "",
+            access_code=access_code or "",
         )
 
         try:

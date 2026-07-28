@@ -134,6 +134,45 @@ async def resolve_preset(preset_data: dict, profile_type: str, db: AsyncSession,
     return merged
 
 
+async def resolve_bundle_preset(
+    preset_data: dict,
+    profile_type: str,
+    bundle_profiles: dict[str, dict],
+    db: AsyncSession,
+    *,
+    chain: tuple[str, ...] = (),
+) -> dict:
+    """Resolve a self-contained bundle and reject missing/cyclic parents.
+
+    Orca's GUI exports custom inheritance chains (for example TinyT and
+    Trident inheriting ``MyToolChanger``) as peer JSON files in the same
+    archive.  Resolving each file independently against Orca's stock GitHub
+    tree silently dropped those custom parents.  Bundle peers are now the
+    first lookup tier; stock profiles remain the final fallback.
+    """
+    name = str(preset_data.get("name") or "<unnamed>")
+    if name in chain:
+        raise ValueError(f"Cyclic inheritance chain: {' -> '.join((*chain, name))}")
+    if len(chain) >= MAX_INHERITANCE_DEPTH:
+        raise ValueError(f"Inheritance chain exceeds {MAX_INHERITANCE_DEPTH} levels")
+    inherits = str(preset_data.get("inherits") or "").strip()
+    if not inherits:
+        return preset_data
+    parent = bundle_profiles.get(inherits)
+    if parent is None:
+        parent = await fetch_and_cache_base_profile(inherits, profile_type, db)
+    if parent is None:
+        raise ValueError(f"Incomplete inheritance chain: {name} -> {inherits} (missing)")
+    resolved_parent = await resolve_bundle_preset(
+        parent,
+        profile_type,
+        bundle_profiles,
+        db,
+        chain=(*chain, name),
+    )
+    return {**resolved_parent, **preset_data}
+
+
 def extract_core_fields(data: dict) -> dict:
     """Extract commonly needed fields from a resolved preset for quick access."""
     fields: dict = {}
@@ -368,25 +407,48 @@ async def import_orca_file(filename: str, content: bytes, db: AsyncSession) -> d
         except json.JSONDecodeError as e:
             errors.append(f"Invalid JSON: {e}")
     elif lower_name.endswith((".orca_filament", ".zip", ".bbscfg", ".bbsflmt")):
-        # ZIP archive — extract and parse each JSON
+        # ZIP archive — load every JSON first so custom parents in the same
+        # bundle can be resolved before any child is accepted.
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                parsed_entries: list[tuple[str, dict]] = []
                 for entry in zf.namelist():
                     if entry.endswith(".json") and "bundle_structure" not in entry:
                         try:
                             raw = zf.read(entry)
                             data = json.loads(raw)
-                            result = await _import_single_preset(data, db, path_hint=entry)
-                            if result == "imported":
-                                imported += 1
-                            elif result == "skipped":
-                                skipped += 1
-                            else:
-                                errors.append(f"{entry}: {result}")
+                            if not isinstance(data, dict):
+                                errors.append(f"{entry}: JSON root must be an object")
+                                continue
+                            parsed_entries.append((entry, data))
                         except json.JSONDecodeError:
                             errors.append(f"{entry}: Invalid JSON")
                         except Exception as e:
                             errors.append(f"{entry}: {e}")
+                bundle_profiles = {
+                    str(data.get("name")): data
+                    for _, data in parsed_entries
+                    if isinstance(data.get("name"), str) and data.get("name")
+                }
+                for entry, data in parsed_entries:
+                    profile_type = _guess_profile_type(data, entry)
+                    try:
+                        resolved = await resolve_bundle_preset(data, profile_type, bundle_profiles, db)
+                    except ValueError as exc:
+                        errors.append(f"{entry}: {exc}")
+                        continue
+                    result = await _import_single_preset(
+                        data,
+                        db,
+                        path_hint=entry,
+                        resolved_data=resolved,
+                    )
+                    if result == "imported":
+                        imported += 1
+                    elif result == "skipped":
+                        skipped += 1
+                    else:
+                        errors.append(f"{entry}: {result}")
         except zipfile.BadZipFile:
             errors.append("Invalid ZIP/orca_filament archive")
     else:
@@ -400,7 +462,13 @@ async def import_orca_file(filename: str, content: bytes, db: AsyncSession) -> d
     }
 
 
-async def _import_single_preset(data: dict, db: AsyncSession, path_hint: str | None = None) -> str:
+async def _import_single_preset(
+    data: dict,
+    db: AsyncSession,
+    path_hint: str | None = None,
+    *,
+    resolved_data: dict | None = None,
+) -> str:
     """Import a single preset dict. Returns 'imported', 'skipped', or error string."""
     name = data.get("name")
     if not name:
@@ -415,11 +483,14 @@ async def _import_single_preset(data: dict, db: AsyncSession, path_hint: str | N
     inherits_value = data.get("inherits")
 
     # Resolve inheritance
-    try:
-        resolved = await resolve_preset(data, profile_type, db)
-    except Exception as e:
-        logger.warning("Failed to resolve inheritance for '%s': %s", name, e)
-        resolved = data
+    if resolved_data is not None:
+        resolved = resolved_data
+    else:
+        try:
+            resolved = await resolve_preset(data, profile_type, db)
+        except Exception as e:
+            logger.warning("Failed to resolve inheritance for '%s': %s", name, e)
+            resolved = data
 
     # Extract core fields
     core = extract_core_fields(resolved)

@@ -1825,6 +1825,7 @@ function PrinterCard({
   const [showEditModal, setShowEditModal] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
   const [showMQTTDebug, setShowMQTTDebug] = useState(false);
+  const [showKlipperPanel, setShowKlipperPanel] = useState(false);
   const [showPowerOnConfirm, setShowPowerOnConfirm] = useState(false);
   const [showPowerOffConfirm, setShowPowerOffConfirm] = useState(false);
   const [haToggleConfirm, setHaToggleConfirm] = useState<SmartPlug | null>(null);
@@ -2441,10 +2442,16 @@ function PrinterCard({
   });
 
   const nozzleTemperatureMutation = useMutation({
-    mutationFn: ({ target, nozzle }: { target: number; nozzle: number }) =>
-      capabilities.can_set_temperature
+    mutationFn: async ({ target, nozzle }: { target: number; nozzle: number }) => {
+      if (fallbackProvider === 'klipper') {
+        const heater = nozzle === 0 ? 'extruder' : `extruder${nozzle}`;
+        await api.setKlipperHeater(printer.id, heater, target);
+        return { message: `${heater} target set to ${target}°C` };
+      }
+      return capabilities.can_set_temperature
         ? api.setTemperature(printer.id, 'nozzle', target)
-        : api.setNozzleTemperature(printer.id, target, nozzle),
+        : api.setNozzleTemperature(printer.id, target, nozzle);
+    },
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
@@ -2454,10 +2461,15 @@ function PrinterCard({
   });
 
   const bedTemperatureMutation = useMutation({
-    mutationFn: (target: number) =>
-      capabilities.can_set_temperature
+    mutationFn: async (target: number) => {
+      if (fallbackProvider === 'klipper') {
+        await api.setKlipperHeater(printer.id, 'bed', target);
+        return { message: `Bed target set to ${target}°C` };
+      }
+      return capabilities.can_set_temperature
         ? api.setTemperature(printer.id, 'bed', target)
-        : api.setBedTemperature(printer.id, target),
+        : api.setBedTemperature(printer.id, target);
+    },
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
@@ -3203,16 +3215,29 @@ function PrinterCard({
             <RotateCw className={`w-4 h-4 ${forceRefreshMutation.isPending ? 'animate-spin' : ''}`} />
             {t('printers.forceRefresh')}
           </button>
-          <button
-            className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
-            onClick={() => {
-              setShowMQTTDebug(true);
-              setShowMenu(false);
-            }}
-          >
-            <Terminal className="w-4 h-4" />
-            {t('printers.mqttDebug')}
-          </button>
+          {fallbackProvider === 'klipper' ? (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+              onClick={() => {
+                setShowKlipperPanel(true);
+                setShowMenu(false);
+              }}
+            >
+              <Terminal className="w-4 h-4" />
+              Klipper controls
+            </button>
+          ) : (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+              onClick={() => {
+                setShowMQTTDebug(true);
+                setShowMenu(false);
+              }}
+            >
+              <Terminal className="w-4 h-4" />
+              {t('printers.mqttDebug')}
+            </button>
+          )}
           <button
             className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
             onClick={() => {
@@ -3821,7 +3846,8 @@ function PrinterCard({
             {status.temperatures && viewMode === 'expanded' && (() => {
               // Use actual heater states from MQTT stream
               const providerTools = status.tools ?? [];
-              const hasDynamicToolGrid = providerTools.length > 2;
+              const hasDynamicToolGrid = providerTools.length > 2
+                || (fallbackProvider !== 'bambu' && providerTools.length > 0);
               const nozzleHeating = providerTools.length > 0
                 ? providerTools.some(tool => tool.heating)
                 : status.temperatures.nozzle_heating || status.temperatures.nozzle_2_heating || false;
@@ -5999,6 +6025,14 @@ function PrinterCard({
         />
       )}
 
+      {showKlipperPanel && status && (
+        <KlipperControlModal
+          printer={printer}
+          status={status}
+          onClose={() => setShowKlipperPanel(false)}
+        />
+      )}
+
       {showDiagnostic && (
         <ConnectionDiagnosticModal
           printerId={printer.id}
@@ -6712,6 +6746,339 @@ function PrinterCard({
   );
 }
 
+function KlipperControlModal({
+  printer,
+  status,
+  onClose,
+}: {
+  printer: Printer;
+  status: PrinterStatus;
+  onClose: () => void;
+}) {
+  const { showToast } = useToast();
+  const { hasPermission } = useAuth();
+  const queryClient = useQueryClient();
+  const canControl = hasPermission('printers:control');
+  const [consoleAcknowledged, setConsoleAcknowledged] = useState(false);
+  const [consoleInput, setConsoleInput] = useState('');
+  const [macroParameters, setMacroParameters] = useState<Record<string, string>>({});
+  const [emergencyConfirmation, setEmergencyConfirmation] = useState('');
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [heaterTargets, setHeaterTargets] = useState<Record<string, string>>({});
+  const [fanTargets, setFanTargets] = useState<Record<string, string>>({});
+  const [speedFactor, setSpeedFactor] = useState(String(status.motion?.speed_factor_percent ?? 100));
+  const [flowFactor, setFlowFactor] = useState(String(status.motion?.flow_factor_percent ?? 100));
+
+  const diagnosticsQuery = useQuery({
+    queryKey: ['klipperDiagnostics', printer.id],
+    queryFn: () => api.getKlipperDiagnostics(printer.id),
+  });
+  const historyQuery = useQuery({
+    queryKey: ['klipperHistory', printer.id],
+    queryFn: () => api.getKlipperHistory(printer.id, 10),
+    refetchInterval: 30000,
+  });
+  const consoleQuery = useQuery({
+    queryKey: ['klipperConsole', printer.id],
+    queryFn: () => api.getKlipperConsoleHistory(printer.id, 100),
+    enabled: canControl,
+    refetchInterval: 5000,
+  });
+
+  const runAction = async (name: string, action: () => Promise<unknown>) => {
+    setBusyAction(name);
+    try {
+      await action();
+      showToast(`${name} sent`, 'success');
+      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: ['klipperConsole', printer.id] });
+      queryClient.invalidateQueries({ queryKey: ['klipperDiagnostics', printer.id] });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : `${name} failed`, 'error');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const homed = new Set(status.motion?.homed_axes ?? []);
+  const fullyHomed = ['x', 'y', 'z'].every(axis => homed.has(axis));
+  const toolReady = diagnosticsQuery.data?.toolchanger_ready === true;
+  const toolSelectionReady = status.state === 'IDLE' && fullyHomed && toolReady;
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-start sm:items-center justify-center bg-black/60 p-4 overflow-y-auto" onClick={onClose}>
+      <div className="w-full max-w-4xl my-auto max-h-[calc(100dvh-2rem)] overflow-y-auto bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 z-10 flex items-center justify-between p-4 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Klipper controls — {printer.name}</h2>
+            <p className="text-xs text-bambu-gray">
+              {diagnosticsQuery.data?.endpoint ?? `${printer.ip_address}:${printer.connection_port ?? 7125}`}
+              {status.device_info?.klipper_version ? ` · ${status.device_info.klipper_version}` : ''}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1 text-bambu-gray hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-4 p-4">
+          <section className="space-y-3">
+            <h3 className="font-medium text-white">Live machine state</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+              <div className="p-2 rounded bg-bambu-dark"><span className="text-bambu-gray">Kinematics</span><p>{status.motion?.kinematics ?? '—'}</p></div>
+              <div className="p-2 rounded bg-bambu-dark"><span className="text-bambu-gray">Homed</span><p>{status.motion?.homed_axes?.join('').toUpperCase() || 'None'}</p></div>
+              <div className="p-2 rounded bg-bambu-dark"><span className="text-bambu-gray">Position</span><p>{Object.entries(status.motion?.position ?? {}).map(([k, v]) => `${k.toUpperCase()} ${v.toFixed(1)}`).join(' ') || '—'}</p></div>
+              <div className="p-2 rounded bg-bambu-dark"><span className="text-bambu-gray">Speed</span><p>{status.motion?.speed_factor_percent ?? 100}%</p></div>
+              <div className="p-2 rounded bg-bambu-dark"><span className="text-bambu-gray">Flow</span><p>{status.motion?.flow_factor_percent ?? 100}%</p></div>
+              <div className="p-2 rounded bg-bambu-dark"><span className="text-bambu-gray">Leveling</span><p>{status.motion?.leveling_method?.replaceAll('_', ' ') ?? 'None'}</p></div>
+            </div>
+            <div className="space-y-1">
+              {(status.sensors ?? []).map(sensor => (
+                <div key={sensor.id} className="flex items-center justify-between px-2 py-1.5 rounded bg-bambu-dark text-xs">
+                  <span>{sensor.label}</span>
+                  <span className={sensor.triggered === false && sensor.kind === 'filament' ? 'text-amber-400' : 'text-bambu-gray'}>
+                    {typeof sensor.value === 'boolean' ? (sensor.value ? 'Detected' : 'Not detected') : `${sensor.value ?? '—'}${sensor.unit ?? ''}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {(status.heaters?.some(heater => heater.controllable && heater.id !== 'bed')
+              || status.fans?.some(fan => fan.controllable)
+              || status.capabilities?.can_set_speed_factor
+              || status.capabilities?.can_set_flow_factor) && (
+              <>
+                <h3 className="pt-2 font-medium text-white">Heaters, fans and tuning</h3>
+                <div className="space-y-2">
+                  {status.heaters?.filter(heater => heater.controllable && heater.id !== 'bed').map(heater => (
+                    <div key={heater.id} className="grid grid-cols-[1fr_5rem_auto] items-center gap-2 rounded bg-bambu-dark p-2 text-xs">
+                      <span>{heater.label} <span className="text-bambu-gray">{Number(heater.temperature ?? 0).toFixed(1)}°C</span></span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={350}
+                        className="w-full rounded border border-bambu-dark-tertiary bg-bambu-dark-secondary px-2 py-1"
+                        value={heaterTargets[heater.id] ?? String(Math.round(heater.target_temperature ?? 0))}
+                        onChange={event => setHeaterTargets(current => ({ ...current, [heater.id]: event.target.value }))}
+                      />
+                      <Button
+                        size="sm"
+                        disabled={!canControl || busyAction !== null}
+                        onClick={() => runAction(
+                          `${heater.label} target`,
+                          () => api.setKlipperHeater(
+                            printer.id,
+                            heater.id,
+                            Number(heaterTargets[heater.id] ?? heater.target_temperature ?? 0),
+                          ),
+                        )}
+                      >
+                        Set
+                      </Button>
+                    </div>
+                  ))}
+                  {status.fans?.filter(fan => fan.controllable).map(fan => (
+                    <div key={fan.id} className="grid grid-cols-[1fr_5rem_auto] items-center gap-2 rounded bg-bambu-dark p-2 text-xs">
+                      <span>{fan.label} <span className="text-bambu-gray">{fan.speed_percent}%</span></span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        className="w-full rounded border border-bambu-dark-tertiary bg-bambu-dark-secondary px-2 py-1"
+                        value={fanTargets[fan.id] ?? String(fan.speed_percent)}
+                        onChange={event => setFanTargets(current => ({ ...current, [fan.id]: event.target.value }))}
+                      />
+                      <Button
+                        size="sm"
+                        disabled={!canControl || busyAction !== null}
+                        onClick={() => runAction(
+                          `${fan.label} speed`,
+                          () => api.setKlipperFan(
+                            printer.id,
+                            fan.id,
+                            Number(fanTargets[fan.id] ?? fan.speed_percent),
+                          ),
+                        )}
+                      >
+                        Set
+                      </Button>
+                    </div>
+                  ))}
+                  <div className="grid grid-cols-2 gap-2">
+                    {status.capabilities?.can_set_speed_factor && (
+                      <label className="rounded bg-bambu-dark p-2 text-xs">
+                        <span className="mb-1 block text-bambu-gray">Speed factor %</span>
+                        <div className="flex gap-1">
+                          <input
+                            type="number"
+                            min={10}
+                            max={300}
+                            className="min-w-0 flex-1 rounded border border-bambu-dark-tertiary bg-bambu-dark-secondary px-2 py-1"
+                            value={speedFactor}
+                            onChange={event => setSpeedFactor(event.target.value)}
+                          />
+                          <Button size="sm" disabled={!canControl || busyAction !== null} onClick={() => runAction('Speed factor', () => api.setKlipperSpeedFactor(printer.id, Number(speedFactor)))}>Set</Button>
+                        </div>
+                      </label>
+                    )}
+                    {status.capabilities?.can_set_flow_factor && (
+                      <label className="rounded bg-bambu-dark p-2 text-xs">
+                        <span className="mb-1 block text-bambu-gray">Flow factor %</span>
+                        <div className="flex gap-1">
+                          <input
+                            type="number"
+                            min={50}
+                            max={200}
+                            className="min-w-0 flex-1 rounded border border-bambu-dark-tertiary bg-bambu-dark-secondary px-2 py-1"
+                            value={flowFactor}
+                            onChange={event => setFlowFactor(event.target.value)}
+                          />
+                          <Button size="sm" disabled={!canControl || busyAction !== null} onClick={() => runAction('Flow factor', () => api.setKlipperFlowFactor(printer.id, Number(flowFactor)))}>Set</Button>
+                        </div>
+                      </label>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            <h3 className="pt-2 font-medium text-white">Motion and calibration</h3>
+            <p className="text-xs text-amber-400">These controls can move the printer. Check the machine before sending one.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" disabled={!canControl || busyAction !== null} onClick={() => runAction('Home all axes', () => api.homeAxes(printer.id, 'all'))}><Home className="w-4 h-4 mr-1" />Home all</Button>
+              {status.capabilities?.can_level_gantry && <Button size="sm" disabled={!canControl || status.state !== 'IDLE' || busyAction !== null} onClick={() => runAction(status.motion?.leveling_method === 'z_tilt' ? 'Z Tilt' : 'Quad Gantry Level', () => api.levelKlipper(printer.id))}>Level gantry</Button>}
+              {status.capabilities?.can_calibrate_bed_mesh && <Button size="sm" disabled={!canControl || status.state !== 'IDLE' || busyAction !== null} onClick={() => runAction('Bed mesh calibration', () => api.calibrateKlipperBedMesh(printer.id))}>Bed mesh</Button>}
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {(['X', 'Y', 'Z'] as const).flatMap(axis => [-1, 1].map(direction => (
+                <Button
+                  key={`${axis}${direction}`}
+                  variant="secondary"
+                  size="sm"
+                  disabled={!canControl || status.state !== 'IDLE' || !homed.has(axis.toLowerCase()) || busyAction !== null}
+                  onClick={() => runAction(`Jog ${axis}`, () => api.jogKlipper(printer.id, axis, direction, axis === 'Z' ? 300 : 3000))}
+                >
+                  {axis}{direction > 0 ? '+' : '−'} 1mm
+                </Button>
+              )))}
+            </div>
+
+            {(status.tools?.length ?? 0) > 1 && (
+              <>
+                <h3 className="pt-2 font-medium text-white">Toolchanger</h3>
+                <div className="flex gap-2">
+                  {status.tools?.map(tool => (
+                    <Button
+                      key={tool.id}
+                      size="sm"
+                      variant={tool.active ? 'primary' : 'secondary'}
+                      disabled={!canControl || !toolSelectionReady || busyAction !== null}
+                      onClick={() => runAction(`Select ${tool.id}`, () => api.selectKlipperTool(printer.id, tool.id))}
+                    >
+                      {tool.label}{tool.active ? ' (active)' : ''}
+                    </Button>
+                  ))}
+                </div>
+                {!toolSelectionReady && <p className="text-xs text-bambu-gray">Tool selection requires an idle, fully homed, ready toolchanger.</p>}
+              </>
+            )}
+
+            <h3 className="pt-2 font-medium text-white">Moonraker history</h3>
+            <div className="max-h-40 space-y-1 overflow-y-auto">
+              {(historyQuery.data?.jobs ?? []).map((job, index) => (
+                <div key={job.job_id ?? `${job.filename}-${index}`} className="rounded bg-bambu-dark p-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-white">{job.filename ?? 'Unnamed job'}</span>
+                    <span className="capitalize text-bambu-gray">{job.status ?? 'unknown'}</span>
+                  </div>
+                  <div className="mt-1 text-bambu-gray">
+                    {job.print_duration != null ? `${Math.round(job.print_duration / 60)} min` : 'Duration unavailable'}
+                    {job.start_time ? ` · ${new Date(job.start_time * 1000).toLocaleString()}` : ''}
+                  </div>
+                </div>
+              ))}
+              {!historyQuery.isLoading && !(historyQuery.data?.jobs.length) && (
+                <p className="text-xs text-bambu-gray">No Moonraker history is available yet.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="font-medium text-white">Discovered macros</h3>
+            <div className="max-h-52 overflow-y-auto space-y-1">
+              {(diagnosticsQuery.data?.macros ?? []).map(macro => (
+                <div key={macro} className="flex gap-2">
+                  <input
+                    className="min-w-0 flex-1 px-2 py-1.5 text-xs bg-bambu-dark border border-bambu-dark-tertiary rounded"
+                    value={macroParameters[macro] ?? ''}
+                    onChange={e => setMacroParameters(current => ({ ...current, [macro]: e.target.value }))}
+                    placeholder={`${macro} parameters (optional)`}
+                  />
+                  <Button size="sm" disabled={!canControl || busyAction !== null} onClick={() => runAction(`Macro ${macro}`, () => api.runKlipperMacro(printer.id, macro, macroParameters[macro] ?? ''))}>Run</Button>
+                </div>
+              ))}
+              {!diagnosticsQuery.isLoading && !(diagnosticsQuery.data?.macros.length) && <p className="text-xs text-bambu-gray">No public macros discovered.</p>}
+            </div>
+
+            <h3 className="pt-2 font-medium text-white">Advanced G-code console</h3>
+            {!consoleAcknowledged ? (
+              <div className="p-3 rounded border border-amber-500/40 bg-amber-500/10 space-y-2">
+                <p className="text-sm text-amber-300">Raw G-code can move, heat, or damage the printer. Commands are never replayed automatically.</p>
+                <Button size="sm" disabled={!canControl} onClick={() => setConsoleAcknowledged(true)}>I understand the risk</Button>
+              </div>
+            ) : (
+              <>
+                <div className="h-52 overflow-y-auto bg-black/40 rounded p-2 font-mono text-xs space-y-1">
+                  {(consoleQuery.data?.history ?? []).map((entry, index) => (
+                    <div key={`${entry.timestamp}-${index}`} className={entry.direction === 'command' ? 'text-cyan-300' : 'text-bambu-gray'}>
+                      <span className="opacity-60">{entry.direction === 'command' ? '>' : '<'}</span> {entry.text}
+                    </div>
+                  ))}
+                </div>
+                <textarea
+                  rows={3}
+                  maxLength={4096}
+                  className="w-full px-2 py-2 font-mono text-xs bg-bambu-dark border border-bambu-dark-tertiary rounded"
+                  value={consoleInput}
+                  onChange={e => setConsoleInput(e.target.value)}
+                  placeholder="Enter G-code. It will be sent once and will not be replayed."
+                />
+                <Button
+                  size="sm"
+                  disabled={!canControl || !consoleInput.trim() || busyAction !== null}
+                  onClick={() => runAction('G-code', async () => {
+                    await api.sendKlipperGcode(printer.id, consoleInput);
+                    setConsoleInput('');
+                  })}
+                >
+                  Send once
+                </Button>
+              </>
+            )}
+
+            <div className="pt-3 mt-3 border-t border-red-500/30 space-y-2">
+              <h3 className="font-medium text-red-400">Emergency stop</h3>
+              <p className="text-xs text-bambu-gray">This immediately shuts down Klipper and requires a firmware restart.</p>
+              <input
+                className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-red-500/40 rounded"
+                value={emergencyConfirmation}
+                onChange={e => setEmergencyConfirmation(e.target.value)}
+                placeholder="Type EMERGENCY STOP"
+              />
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={!canControl || emergencyConfirmation !== 'EMERGENCY STOP' || busyAction !== null}
+                onClick={() => runAction('Emergency stop', () => api.klipperEmergencyStop(printer.id, emergencyConfirmation))}
+              >
+                Emergency stop
+              </Button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AddPrinterModal({
   onClose,
   onAdd,
@@ -6728,6 +7095,7 @@ export function AddPrinterModal({
     ip_address: '',
     access_code: '',
     provider: 'bambu',
+    connection_port: 8883,
     model: '',
     location: '',
     auto_archive: true,
@@ -6783,11 +7151,15 @@ export function AddPrinterModal({
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (form.provider === 'klipper') {
+      onAdd(form);
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
         ip_address: form.ip_address.trim(),
-        serial_number: form.serial_number.trim() || undefined,
+        serial_number: (form.serial_number || '').trim() || undefined,
         access_code: form.access_code || undefined,
         provider: form.provider,
         model: form.model || undefined,
@@ -7084,24 +7456,26 @@ export function AddPrinterModal({
                 placeholder="192.168.1.100 or printer.local"
               />
             </div>
-            <div>
+            {form.provider !== 'klipper' && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
               <input
                 type="text"
                 required
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.serial_number}
+                value={form.serial_number || ''}
                 onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
                 placeholder="01P00A000000000"
               />
-            </div>
+            </div>}
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {form.provider === 'klipper' ? 'Moonraker API Key (optional)' : t('printers.accessCode')}
+              </label>
               <input
                 type="password"
-                required
+                required={form.provider !== 'klipper'}
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.access_code}
+                value={form.access_code || ''}
                 onChange={(e) => setForm({ ...form, access_code: e.target.value })}
                 placeholder={t('printers.modal.fromPrinterSettings')}
               />
@@ -7112,18 +7486,58 @@ export function AddPrinterModal({
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.provider || 'bambu'}
                 onChange={(e) => {
-                  const provider = e.target.value as 'bambu' | 'flashforge';
+                  const provider = e.target.value as 'bambu' | 'flashforge' | 'klipper';
                   setForm({
                     ...form,
                     provider,
-                    model: provider === 'flashforge' ? 'FlashForge Creator 5 Pro' : '',
+                    model: provider === 'flashforge' ? 'FlashForge Creator 5 Pro' : provider === 'klipper' ? 'Klipper' : '',
+                    connection_port: provider === 'klipper' ? 7125 : provider === 'flashforge' ? 8898 : 8883,
+                    serial_number: provider === 'klipper' ? undefined : form.serial_number,
                   });
                 }}
               >
                 <option value="bambu">Bambu Lab</option>
                 <option value="flashforge">FlashForge</option>
+                <option value="klipper">Klipper / Moonraker</option>
               </select>
             </div>
+            {form.provider === 'klipper' && (
+              <>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">Moonraker Port</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    required
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.connection_port ?? 7125}
+                    onChange={(e) => setForm({ ...form, connection_port: Number(e.target.value) })}
+                  />
+                  <p className="text-xs text-bambu-gray mt-1">Usually 7125. Trusted-LAN Moonraker needs no API key.</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">Orca printer preset reference</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <select
+                      className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white"
+                      value={form.slicer_preset_source || 'orca_cloud'}
+                      onChange={(e) => setForm({ ...form, slicer_preset_source: e.target.value })}
+                    >
+                      <option value="orca_cloud">Orca Cloud</option>
+                      <option value="local">Imported bundle</option>
+                    </select>
+                    <input
+                      className="col-span-2 px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white"
+                      value={form.slicer_preset_id || ''}
+                      onChange={(e) => setForm({ ...form, slicer_preset_id: e.target.value })}
+                      placeholder="Exact printer_settings_id"
+                    />
+                  </div>
+                  <p className="text-xs text-bambu-gray mt-1">Used to prevent a TinyT file being dispatched to Trident, or vice versa.</p>
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
               <select
@@ -7132,7 +7546,11 @@ export function AddPrinterModal({
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
-                {form.provider === 'flashforge' ? (
+                {form.provider === 'klipper' ? (
+                  <optgroup label="Klipper">
+                    <option value="Klipper">Klipper / Moonraker</option>
+                  </optgroup>
+                ) : form.provider === 'flashforge' ? (
                   <optgroup label="FlashForge">
                     <option value="FlashForge Creator 5 Pro">Creator 5 Pro</option>
                   </optgroup>
@@ -7191,7 +7609,7 @@ export function AddPrinterModal({
                 {t('printers.modal.autoArchiveLabel')}
               </label>
             </div>
-            <button
+            {form.provider !== 'klipper' && <button
               type="button"
               onClick={() => setShowDiagnostic(true)}
               disabled={!form.ip_address.trim()}
@@ -7199,7 +7617,7 @@ export function AddPrinterModal({
             >
               <Stethoscope className="w-4 h-4" />
               {t('diagnostic.runButton')}
-            </button>
+            </button>}
             {saveWarning ? (
               <div className="rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/30 p-3 space-y-3">
                 <div className="flex items-start gap-2">
@@ -7239,7 +7657,7 @@ export function AddPrinterModal({
       <ConnectionDiagnosticModal
         connection={{
           ip_address: form.ip_address.trim(),
-          serial_number: form.serial_number.trim() || undefined,
+          serial_number: (form.serial_number || '').trim() || undefined,
           access_code: form.access_code || undefined,
           provider: form.provider,
           model: form.model || undefined,
@@ -7547,6 +7965,9 @@ function EditPrinterModal({
     ip_address: printer.ip_address,
     access_code: '',
     provider: printer.provider || (printer.model?.toLowerCase().includes('creator 5 pro') ? 'flashforge' : 'bambu'),
+    connection_port: printer.connection_port ?? (printer.provider === 'klipper' ? 7125 : null),
+    slicer_preset_source: printer.slicer_preset_source || 'orca_cloud',
+    slicer_preset_id: printer.slicer_preset_id || '',
     model: printer.model || '',
     location: printer.location || '',
     auto_archive: printer.auto_archive,
@@ -7582,6 +8003,9 @@ function EditPrinterModal({
       name: form.name,
       ip_address: form.ip_address,
       provider: form.provider,
+      connection_port: form.connection_port,
+      slicer_preset_source: form.provider === 'klipper' ? form.slicer_preset_source : undefined,
+      slicer_preset_id: form.provider === 'klipper' ? form.slicer_preset_id || undefined : undefined,
       model: form.model || undefined,
       location: form.location || undefined,
       auto_archive: form.auto_archive,
@@ -7596,6 +8020,10 @@ function EditPrinterModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (form.provider === 'klipper') {
+      doSave();
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -7660,7 +8088,9 @@ function EditPrinterModal({
               <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
             </div>
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {form.provider === 'klipper' ? 'Moonraker API Key (leave blank to keep current)' : t('printers.accessCode')}
+              </label>
               <input
                 type="password"
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -7675,18 +8105,55 @@ function EditPrinterModal({
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.provider}
                 onChange={(e) => {
-                  const provider = e.target.value as 'bambu' | 'flashforge';
+                  const provider = e.target.value as 'bambu' | 'flashforge' | 'klipper';
                   setForm({
                     ...form,
                     provider,
-                    model: provider === 'flashforge' ? 'FlashForge Creator 5 Pro' : '',
+                    model: provider === 'flashforge' ? 'FlashForge Creator 5 Pro' : provider === 'klipper' ? 'Klipper' : '',
+                    connection_port: provider === 'klipper' ? 7125 : provider === 'flashforge' ? 8898 : 8883,
                   });
                 }}
               >
                 <option value="bambu">Bambu Lab</option>
                 <option value="flashforge">FlashForge</option>
+                <option value="klipper">Klipper / Moonraker</option>
               </select>
             </div>
+            {form.provider === 'klipper' && (
+              <>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">Moonraker Port</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    required
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.connection_port ?? 7125}
+                    onChange={(e) => setForm({ ...form, connection_port: Number(e.target.value) })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">Orca printer preset reference</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <select
+                      className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white"
+                      value={form.slicer_preset_source}
+                      onChange={(e) => setForm({ ...form, slicer_preset_source: e.target.value })}
+                    >
+                      <option value="orca_cloud">Orca Cloud</option>
+                      <option value="local">Imported bundle</option>
+                    </select>
+                    <input
+                      className="col-span-2 px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white"
+                      value={form.slicer_preset_id}
+                      onChange={(e) => setForm({ ...form, slicer_preset_id: e.target.value })}
+                      placeholder="Exact printer_settings_id"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
               <select
@@ -7695,7 +8162,11 @@ function EditPrinterModal({
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
-                {form.provider === 'flashforge' ? (
+                {form.provider === 'klipper' ? (
+                  <optgroup label="Klipper">
+                    <option value="Klipper">Klipper / Moonraker</option>
+                  </optgroup>
+                ) : form.provider === 'flashforge' ? (
                   <optgroup label="FlashForge">
                     <option value="FlashForge Creator 5 Pro">Creator 5 Pro</option>
                   </optgroup>

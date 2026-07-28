@@ -89,6 +89,11 @@ class PrintQueueItem(Base):
     # true, the scheduler deletes the source row/files after archiving a copy.
     cleanup_library_after_dispatch: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # A one-time explicit warning accepted before assigning unverifiable raw
+    # G-code to an exact Klipper printer. Persisted so the scheduler can
+    # re-check legacy/directly-created rows immediately before dispatch.
+    klipper_compatibility_acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Print options. bed_levelling / flow_cali / nozzle_offset_cali are tri-state
     # strings (off/on/auto) matching BambuStudio; "auto" = skip if recently done.
     # The remaining three stay boolean (BambuStudio exposes no auto for them).

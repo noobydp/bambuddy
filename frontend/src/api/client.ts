@@ -360,7 +360,10 @@ export interface Printer {
   // PRINTERS_UPDATE — Admin / Operator JWTs or auth-disabled mode. Viewers and
   // API keys receive a Printer without this field.
   access_code?: string;
-  provider?: 'bambu' | 'flashforge';
+  provider?: 'bambu' | 'flashforge' | 'klipper';
+  connection_port?: number | null;
+  slicer_preset_source?: string | null;
+  slicer_preset_id?: string | null;
   model: string | null;
   location: string | null;  // Group/location name
   nozzle_count: number;  // 1 or 2, auto-detected from MQTT
@@ -486,7 +489,7 @@ export interface FilaSwitchState {
 export interface PrinterStatus {
   id: number;
   name: string;
-  provider?: 'bambu' | 'flashforge';
+  provider?: 'bambu' | 'flashforge' | 'klipper';
   connected: boolean;
   state: string | null;
   current_print: string | null;
@@ -594,6 +597,8 @@ export interface PrinterStatus {
   tools?: PrinterToolStatus[];
   heaters?: PrinterHeaterStatus[];
   fans?: PrinterFanStatus[];
+  sensors?: PrinterSensorStatus[];
+  motion?: PrinterMotionStatus | null;
   material_systems?: MaterialSystemStatus[];
   device_info?: PrinterDeviceInfo | null;
 }
@@ -622,6 +627,15 @@ export interface PrinterCapabilities {
   can_update_firmware?: boolean;
   can_virtual_printer?: boolean;
   can_manage_material_system?: boolean;
+  can_set_fan?: boolean;
+  can_set_speed_factor?: boolean;
+  can_set_flow_factor?: boolean;
+  can_jog_axes?: boolean;
+  can_level_gantry?: boolean;
+  can_calibrate_bed_mesh?: boolean;
+  can_select_tool?: boolean;
+  can_run_gcode?: boolean;
+  can_emergency_stop?: boolean;
   unsupported_reasons?: Record<string, string>;
 }
 
@@ -654,6 +668,24 @@ export interface PrinterFanStatus {
   controllable: boolean;
 }
 
+export interface PrinterSensorStatus {
+  id: string;
+  label: string;
+  kind: string;
+  value: string | number | boolean | null;
+  unit: string | null;
+  triggered: boolean | null;
+}
+
+export interface PrinterMotionStatus {
+  position: Record<string, number>;
+  homed_axes: string[];
+  speed_factor_percent: number | null;
+  flow_factor_percent: number | null;
+  kinematics: string | null;
+  leveling_method: string | null;
+}
+
 export interface MaterialSlotStatus {
   id: number;
   label: string;
@@ -683,14 +715,22 @@ export interface PrinterDeviceInfo {
   auto_shutdown: boolean | null;
   auto_shutdown_minutes: number | null;
   remaining_disk_gb: number | null;
+  hostname?: string | null;
+  moonraker_version?: string | null;
+  klipper_version?: string | null;
+  kinematics?: string | null;
+  mcu_count?: number | null;
 }
 
 export interface PrinterCreate {
   name: string;
-  serial_number: string;
+  serial_number?: string;
   ip_address: string;
-  access_code: string;
-  provider?: 'bambu' | 'flashforge';
+  access_code?: string;
+  provider?: 'bambu' | 'flashforge' | 'klipper';
+  connection_port?: number | null;
+  slicer_preset_source?: string | null;
+  slicer_preset_id?: string | null;
   model?: string;
   location?: string;
   auto_archive?: boolean;
@@ -705,6 +745,35 @@ export interface PrinterCreate {
   camera_rotation?: number;
   plate_detection_enabled?: boolean;
   plate_detection_roi?: PlateDetectionROI;
+}
+
+export interface KlipperConsoleEntry {
+  timestamp: number;
+  direction: 'command' | 'response';
+  source: string;
+  text: string;
+}
+
+export interface KlipperHistoryJob {
+  job_id?: string | null;
+  filename?: string | null;
+  status?: string | null;
+  start_time?: number | null;
+  end_time?: number | null;
+  print_duration?: number | null;
+  total_duration?: number | null;
+  filament_used?: number | null;
+}
+
+export interface KlipperDiagnostics {
+  connected: boolean;
+  endpoint: string;
+  api_key_configured: boolean;
+  objects: string[];
+  macros: string[];
+  webcams: Array<Record<string, unknown>>;
+  toolchanger_ready: boolean;
+  device_info: PrinterDeviceInfo | null;
 }
 
 // Plate Detection
@@ -2395,6 +2464,9 @@ export interface PrintQueueItemCreate {
   project_id?: number;
   // Delete transient uploaded library file after scheduler creates the archive
   cleanup_library_after_dispatch?: boolean;
+  // Explicit acknowledgement required before manually dispatching raw G-code
+  // that has no embedded printer-preset identity to a Klipper printer.
+  klipper_compatibility_acknowledged?: boolean;
 }
 
 export interface PrintBatchCreate {
@@ -2417,6 +2489,7 @@ export interface PrintQueueItemUpdate {
   require_previous_success?: boolean;
   auto_off_after?: boolean;
   manual_start?: boolean;
+  klipper_compatibility_acknowledged?: boolean;
   ams_mapping?: number[];
   plate_id?: number | null;  // Plate ID for multi-plate 3MF files
   // Print options
@@ -4018,6 +4091,62 @@ export const api = {
 
   selectExtruder: (printerId: number, extruder: number) =>
     request<{ success: boolean; message: string }>(`/printers/${printerId}/select-extruder?extruder=${extruder}`, {
+      method: 'POST',
+    }),
+  getKlipperDiagnostics: (id: number) =>
+    request<KlipperDiagnostics>(`/printers/${id}/klipper/diagnostics`),
+  getKlipperMacros: (id: number) =>
+    request<{ macros: string[] }>(`/printers/${id}/klipper/macros`),
+  getKlipperHistory: (id: number, limit: number = 25) =>
+    request<{ jobs: KlipperHistoryJob[] }>(`/printers/${id}/klipper/history?limit=${limit}`),
+  runKlipperMacro: (id: number, name: string, parameters: string = '') =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/macros/${encodeURIComponent(name)}/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ parameters }),
+    }),
+  getKlipperConsoleHistory: (id: number, limit: number = 100) =>
+    request<{ history: KlipperConsoleEntry[] }>(`/printers/${id}/klipper/console/history?limit=${limit}`),
+  sendKlipperGcode: (id: number, script: string) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/console/gcode`, {
+      method: 'POST',
+      body: JSON.stringify({ script, danger_acknowledged: true }),
+    }),
+  klipperEmergencyStop: (id: number, confirmation: string) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/emergency-stop`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmation }),
+    }),
+  setKlipperHeater: (id: number, heater: string, target: number) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/heaters/${encodeURIComponent(heater)}/target`, {
+      method: 'POST',
+      body: JSON.stringify({ target }),
+    }),
+  setKlipperFan: (id: number, fan: string, speedPercent: number) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/fans/${encodeURIComponent(fan)}/speed`, {
+      method: 'POST',
+      body: JSON.stringify({ speed_percent: speedPercent }),
+    }),
+  setKlipperSpeedFactor: (id: number, percent: number) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/speed-factor`, {
+      method: 'POST',
+      body: JSON.stringify({ percent }),
+    }),
+  setKlipperFlowFactor: (id: number, percent: number) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/flow-factor`, {
+      method: 'POST',
+      body: JSON.stringify({ percent }),
+    }),
+  jogKlipper: (id: number, axis: 'X' | 'Y' | 'Z' | 'E', distance: number, speed: number) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/jog`, {
+      method: 'POST',
+      body: JSON.stringify({ axis, distance, speed }),
+    }),
+  levelKlipper: (id: number) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/level`, { method: 'POST' }),
+  calibrateKlipperBedMesh: (id: number) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/bed-mesh-calibrate`, { method: 'POST' }),
+  selectKlipperTool: (id: number, toolId: string) =>
+    request<{ success: boolean }>(`/printers/${id}/klipper/tools/${encodeURIComponent(toolId)}/select`, {
       method: 'POST',
     }),
 
@@ -5926,11 +6055,19 @@ export const api = {
     request<CameraDiagnoseResult>(`/printers/${printerId}/camera/diagnose`, { method: 'POST' }),
   diagnosePrinter: (printerId: number) =>
     request<PrinterDiagnosticResult>(`/printers/${printerId}/diagnostic`),
+  testSlicerSidecar: () =>
+    request<{
+      success: boolean;
+      configured: boolean;
+      url?: string;
+      health?: Record<string, unknown>;
+      message?: string;
+    }>('/slicer/health'),
   diagnoseConnection: (body: {
     ip_address: string;
     serial_number?: string;
     access_code?: string;
-    provider?: 'bambu' | 'flashforge';
+    provider?: 'bambu' | 'flashforge' | 'klipper';
     model?: string;
   }) =>
     request<PrinterDiagnosticResult>('/printers/diagnostic', {

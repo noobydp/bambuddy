@@ -1,5 +1,8 @@
 """Integration tests for Print Queue API endpoints."""
 
+import json
+import zipfile
+
 import pytest
 from httpx import AsyncClient
 
@@ -3287,3 +3290,231 @@ async def test_stop_online_leaves_archive_for_mqtt_to_reconcile_2603(
     await db_session.refresh(archive)
     assert item.status == "cancelled"
     assert archive.status == "printing", "an online stop must leave the archive for the MQTT completion path"
+
+
+class TestKlipperQueueCompatibility:
+    @pytest.fixture
+    async def printer_factory(self, db_session):
+        from backend.app.models.printer import Printer
+
+        async def create(**kwargs):
+            defaults = {
+                "name": "Klipper Test Printer",
+                "ip_address": "192.0.2.30",
+                "serial_number": "KLIPPER-TEST",
+                "access_code": "",
+                "model": "Klipper",
+                "provider": "klipper",
+            }
+            defaults.update(kwargs)
+            printer = Printer(**defaults)
+            db_session.add(printer)
+            await db_session.commit()
+            await db_session.refresh(printer)
+            return printer
+
+        return create
+
+    @pytest.fixture
+    async def library_file_factory(self, db_session):
+        from backend.app.models.library import LibraryFile
+
+        async def create(**kwargs):
+            defaults = {
+                "filename": "klipper-test.gcode.3mf",
+                "file_path": "/test/library/klipper-test.gcode.3mf",
+                "file_size": 128,
+                "file_type": "3mf",
+                "file_metadata": {"print_name": "Klipper Test"},
+            }
+            defaults.update(kwargs)
+            library_file = LibraryFile(**defaults)
+            db_session.add(library_file)
+            await db_session.commit()
+            await db_session.refresh(library_file)
+            return library_file
+
+        return create
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_raw_gcode_requires_manual_compatibility_acknowledgement(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+        library_file_factory,
+    ):
+        printer = await printer_factory(
+            provider="klipper",
+            model="Klipper",
+            serial_number="KLIPPER-TEST-RAW",
+            access_code="",
+            connection_port=7125,
+            slicer_preset_id="TinyT",
+        )
+        library_file = await library_file_factory(
+            filename="manual-validation.gcode",
+            file_path="/test/library/manual-validation.gcode",
+            file_type="gcode",
+        )
+
+        response = await async_client.post(
+            "/api/v1/queue/",
+            json={"printer_id": printer.id, "library_file_id": library_file.id},
+        )
+        assert response.status_code == 409
+        assert "Confirm compatibility" in response.json()["detail"]
+
+        response = await async_client.post(
+            "/api/v1/queue/",
+            json={
+                "printer_id": printer.id,
+                "library_file_id": library_file.id,
+                "klipper_compatibility_acknowledged": True,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["printer_id"] == printer.id
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_3mf_requires_exact_linked_orca_printer_preset(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+        library_file_factory,
+        tmp_path,
+    ):
+        printer = await printer_factory(
+            provider="klipper",
+            model="Klipper",
+            serial_number="KLIPPER-TEST-3MF",
+            access_code="",
+            connection_port=7125,
+            slicer_preset_source="orca_cloud",
+            slicer_preset_id="TinyT",
+        )
+        source = tmp_path / "tinyt.gcode.3mf"
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr(
+                "Metadata/project_settings.config",
+                json.dumps({"printer_settings_id": "Trident"}),
+            )
+            archive.writestr("Metadata/plate_1.gcode", "; harmless fixture")
+        library_file = await library_file_factory(
+            filename=source.name,
+            file_path=str(source),
+            file_type="3mf",
+        )
+
+        mismatch = await async_client.post(
+            "/api/v1/queue/",
+            json={"printer_id": printer.id, "library_file_id": library_file.id},
+        )
+        assert mismatch.status_code == 400
+        assert "does not exactly match TinyT" in mismatch.json()["detail"]
+
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr(
+                "Metadata/project_settings.config",
+                json.dumps({"printer_settings_id": "TinyT"}),
+            )
+            archive.writestr("Metadata/plate_1.gcode", "; harmless fixture")
+        accepted = await async_client.post(
+            "/api/v1/queue/",
+            json={"printer_id": printer.id, "library_file_id": library_file.id},
+        )
+        assert accepted.status_code == 200
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_model_pool_dispatch_is_rejected_for_klipper(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+        library_file_factory,
+    ):
+        await printer_factory(
+            provider="klipper",
+            model="Klipper",
+            serial_number="KLIPPER-TEST-POOL",
+            access_code="",
+            connection_port=7125,
+        )
+        library_file = await library_file_factory()
+
+        response = await async_client.post(
+            "/api/v1/queue/",
+            json={"target_model": "Klipper", "library_file_id": library_file.id},
+        )
+        assert response.status_code == 400
+        assert "exact printer" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_reassigning_raw_gcode_to_klipper_requires_acknowledgement(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+        library_file_factory,
+    ):
+        printer = await printer_factory(
+            serial_number="KLIPPER-TEST-REASSIGN",
+            slicer_preset_id="TinyT",
+        )
+        library_file = await library_file_factory(
+            filename="reassign.gcode",
+            file_path="/test/library/reassign.gcode",
+            file_type="gcode",
+        )
+        queued = await async_client.post(
+            "/api/v1/queue/",
+            json={"library_file_id": library_file.id},
+        )
+        assert queued.status_code == 200
+
+        rejected = await async_client.patch(
+            f"/api/v1/queue/{queued.json()['id']}",
+            json={"printer_id": printer.id},
+        )
+        assert rejected.status_code == 409
+
+        accepted = await async_client.patch(
+            f"/api/v1/queue/{queued.json()['id']}",
+            json={
+                "printer_id": printer.id,
+                "klipper_compatibility_acknowledged": True,
+            },
+        )
+        assert accepted.status_code == 200
+        assert accepted.json()["printer_id"] == printer.id
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bulk_assignment_to_klipper_is_rejected(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+        library_file_factory,
+    ):
+        printer = await printer_factory(
+            serial_number="KLIPPER-TEST-BULK",
+            slicer_preset_id="TinyT",
+        )
+        library_file = await library_file_factory(
+            filename="bulk.gcode",
+            file_path="/test/library/bulk.gcode",
+            file_type="gcode",
+        )
+        queued = await async_client.post(
+            "/api/v1/queue/",
+            json={"library_file_id": library_file.id},
+        )
+        assert queued.status_code == 200
+
+        response = await async_client.patch(
+            "/api/v1/queue/bulk",
+            json={"item_ids": [queued.json()["id"]], "printer_id": printer.id},
+        )
+        assert response.status_code == 400
+        assert "assigned individually" in response.json()["detail"]

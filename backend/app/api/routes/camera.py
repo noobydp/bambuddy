@@ -7,6 +7,7 @@ import subprocess
 import sys
 from collections.abc import AsyncGenerator
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
@@ -43,6 +44,8 @@ from backend.app.services.camera_fanout import (
 )
 from backend.app.services.camera_profiles import get_camera_profile
 from backend.app.services.flashforge_local import is_flashforge_model
+from backend.app.services.moonraker import DEFAULT_MOONRAKER_PORT
+from backend.app.services.printer_providers import PROVIDER_KLIPPER, provider_for_printer
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/printers", tags=["camera"])
@@ -116,6 +119,70 @@ async def _generate_flashforge_polling_stream(
             _last_frame_times[printer_id] = time.time()
             yield _format_mjpeg_frame(frame)
         await asyncio.sleep(frame_interval)
+
+
+async def _moonraker_webcam(printer: Printer) -> dict | None:
+    """Discover the first enabled webcam without trusting an arbitrary URL."""
+    port = printer.connection_port or DEFAULT_MOONRAKER_PORT
+    headers = {"X-Api-Key": printer.access_code} if printer.access_code else {}
+    try:
+        async with httpx.AsyncClient(headers=headers, timeout=10) as client:
+            response = await client.get(f"http://{printer.ip_address}:{port}/server/webcams/list")
+            response.raise_for_status()
+            webcams = (response.json().get("result") or {}).get("webcams") or []
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    return next((item for item in webcams if item.get("enabled", True)), None)
+
+
+def _moonraker_camera_urls(printer: Printer, webcam: dict, field: str) -> list[str]:
+    """Resolve only same-host Moonraker camera paths to prevent proxy SSRF.
+
+    Moonraker stores webcam paths relative to the printer host.  Some installs
+    expose those paths directly on Moonraker's port while Mainsail/Crowsnest
+    installs (including both live acceptance printers) expose them through the
+    host's port-80 reverse proxy.  Try only those two same-host locations.
+    """
+    path = str(webcam.get(field) or "").strip()
+    if not path.startswith("/") or path.startswith("//"):
+        return []
+    port = printer.connection_port or DEFAULT_MOONRAKER_PORT
+    urls = [f"http://{printer.ip_address}:{port}{path}"]
+    if port != 80:
+        urls.append(f"http://{printer.ip_address}{path}")
+    return urls
+
+
+async def _generate_moonraker_polling_stream(
+    printer_id: int,
+    printer: Printer,
+    snapshot_urls: list[str],
+    fps: int,
+) -> AsyncGenerator[bytes, None]:
+    headers = {"X-Api-Key": printer.access_code} if printer.access_code else {}
+    frame_interval = 1.0 / max(1, min(fps, 10))
+    preferred_url: str | None = None
+    async with httpx.AsyncClient(headers=headers, timeout=10) as client:
+        while True:
+            candidates = [preferred_url] if preferred_url else snapshot_urls
+            frame = None
+            for candidate in candidates:
+                try:
+                    response = await client.get(candidate)
+                    response.raise_for_status()
+                    frame = response.content
+                    if frame:
+                        preferred_url = candidate
+                        break
+                except httpx.HTTPError:
+                    continue
+            if frame:
+                _last_frames[printer_id] = frame
+                yield _format_mjpeg_frame(frame)
+            else:
+                preferred_url = None
+                logger.debug("Moonraker webcam snapshot failed for printer %s", printer_id)
+            await asyncio.sleep(frame_interval)
 
 
 def is_stream_active(printer_id: int) -> bool:
@@ -690,6 +757,32 @@ async def camera_stream(
     async with database.async_session() as db:
         printer = await get_printer_or_404(printer_id, db)
 
+    if provider_for_printer(printer) == PROVIDER_KLIPPER:
+        webcam = await _moonraker_webcam(printer)
+        snapshot_urls = _moonraker_camera_urls(printer, webcam or {}, "snapshot_url")
+        if not webcam or not snapshot_urls:
+            raise HTTPException(404, "Moonraker did not expose a usable webcam snapshot URL")
+        fps = min(max(fps, 1), 10)
+        _active_external_streams.add(printer_id)
+
+        async def moonraker_stream_wrapper():
+            try:
+                async for frame in _generate_moonraker_polling_stream(
+                    printer_id,
+                    printer,
+                    snapshot_urls,
+                    fps,
+                ):
+                    yield frame
+            finally:
+                _active_external_streams.discard(printer_id)
+
+        return StreamingResponse(
+            moonraker_stream_wrapper(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
     if is_flashforge_model(printer.model):
         import time
 
@@ -1001,6 +1094,30 @@ async def camera_snapshot(
     # below reads only already-loaded scalar columns (expire_on_commit=False).
     async with database.async_session() as db:
         printer = await get_printer_or_404(printer_id, db)
+
+    if provider_for_printer(printer) == PROVIDER_KLIPPER:
+        webcam = await _moonraker_webcam(printer)
+        snapshot_urls = _moonraker_camera_urls(printer, webcam or {}, "snapshot_url")
+        if not webcam or not snapshot_urls:
+            raise HTTPException(404, "Moonraker did not expose a usable webcam snapshot URL")
+        headers = {"X-Api-Key": printer.access_code} if printer.access_code else {}
+        response = None
+        async with httpx.AsyncClient(headers=headers, timeout=15) as client:
+            for snapshot_url in snapshot_urls:
+                try:
+                    response = await client.get(snapshot_url)
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPError:
+                    response = None
+        if response is None:
+            raise HTTPException(503, "Failed to capture frame from Moonraker camera")
+        frame_data = response.content
+        return Response(
+            content=frame_data,
+            media_type=response.headers.get("content-type", "image/jpeg"),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
     if is_flashforge_model(printer.model):
         frame_data = await read_flashforge_mjpeg_frame(printer.ip_address, timeout=15.0)

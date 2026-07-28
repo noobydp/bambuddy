@@ -74,6 +74,29 @@ _bundled_cache: tuple[float, dict[str, list[UnifiedPreset]]] | None = None
 _CLOUD_TTL_S = 300.0
 _cloud_cache: dict[tuple[int, str], tuple[float, dict[str, list[UnifiedPreset]]]] = {}
 
+
+@router.get("/health")
+async def test_slicer_sidecar(
+    _=RequirePermissionIfAuthEnabled(Permission.SETTINGS_READ),
+    db: AsyncSession = Depends(get_db),
+):
+    """Test the configured companion container using its public health API."""
+    api_url = await _resolve_slicer_api_url(db)
+    if not api_url:
+        return {"success": False, "configured": False, "message": "No slicer sidecar URL is configured"}
+    try:
+        async with SlicerApiService(api_url) as service:
+            health = await service.health()
+        return {"success": True, "configured": True, "url": api_url, "health": health}
+    except SlicerApiError as exc:
+        return {
+            "success": False,
+            "configured": True,
+            "url": api_url,
+            "message": str(exc),
+        }
+
+
 # Same shape for Orca Cloud — keyed on (user_id, access_token-fingerprint).
 _orca_cloud_cache: dict[tuple[int, str], tuple[float, dict[str, list[UnifiedPreset]]]] = {}
 

@@ -217,6 +217,7 @@ export function PrintModal({
 
   // Submission state for multi-printer
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const klipperCompatibilityAcknowledged = useRef(false);
   const [submitProgress, setSubmitProgress] = useState({ current: 0, total: 0 });
 
   const [filamentWarningItems, setFilamentWarningItems] = useState<FilamentWarningItem[] | null>(null);
@@ -799,6 +800,16 @@ export function PrintModal({
       showToast(`File was sliced for ${slicedForModel} and cannot be dispatched to ${targetModel} printers`, 'error');
       return;
     }
+    const selectedKlipper = assignmentMode === 'printer'
+      && selectedPrinters.some(id => printers?.find(printer => printer.id === id)?.provider === 'klipper');
+    const isRawGcode = (archiveName || '').toLowerCase().endsWith('.gcode');
+    if (selectedKlipper && isRawGcode && !klipperCompatibilityAcknowledged.current) {
+      const confirmed = window.confirm(
+        'Raw G-code does not identify the exact printer profile. Only continue if this file was sliced for the selected Klipper printer.'
+      );
+      if (!confirmed) return;
+      klipperCompatibilityAcknowledged.current = true;
+    }
 
     setIsSubmitting(true);
     // Calculate total API calls: plates × printers (or 1 for model-based)
@@ -929,6 +940,9 @@ export function PrintModal({
       project_id: projectId ?? undefined,
       batch_id: autoBatchId ?? undefined,
       cleanup_library_after_dispatch: cleanupLibraryAfterDispatch,
+      klipper_compatibility_acknowledged: selectedKlipper && isRawGcode
+        ? klipperCompatibilityAcknowledged.current
+        : undefined,
       };
     };
 
@@ -1005,9 +1019,12 @@ export function PrintModal({
                 target_location: null,
                 require_previous_success: scheduleOptions.requirePreviousSuccess,
                 auto_off_after: scheduleOptions.autoOffAfter,
-                gcode_injection: scheduleOptions.gcodeInjection,
-                manual_start: scheduleOptions.scheduleType === 'queue' && scheduleOptions.requireManualStart,
-                ams_mapping: printerMapping,
+              gcode_injection: scheduleOptions.gcodeInjection,
+              manual_start: scheduleOptions.scheduleType === 'queue' && scheduleOptions.requireManualStart,
+              klipper_compatibility_acknowledged: selectedKlipper && isRawGcode
+                ? klipperCompatibilityAcknowledged.current
+                : undefined,
+              ams_mapping: printerMapping,
                 plate_id: plateId,
                 scheduled_time: scheduleOptions.scheduleType === 'scheduled' && scheduleOptions.scheduledTime
                   ? new Date(scheduleOptions.scheduledTime).toISOString()

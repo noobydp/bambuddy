@@ -96,6 +96,9 @@ class PrintQueueItemCreate(BaseModel):
     # Direct printer-card uploads are temporary library files. The scheduler
     # deletes them after creating the durable archive copy.
     cleanup_library_after_dispatch: bool = False
+    # Required when a raw G-code file is manually assigned to a Klipper
+    # printer because the file carries no reliable target-printer metadata.
+    klipper_compatibility_acknowledged: bool = False
 
 
 class PrintQueueItemUpdate(BaseModel):
@@ -108,6 +111,8 @@ class PrintQueueItemUpdate(BaseModel):
     require_previous_success: bool | None = None
     auto_off_after: bool | None = None
     manual_start: bool | None = None
+    # One-shot safety acknowledgement; validated by the route and never stored.
+    klipper_compatibility_acknowledged: bool | None = None
     ams_mapping: list[int] | None = None
     plate_id: int | None = None
     # Print options

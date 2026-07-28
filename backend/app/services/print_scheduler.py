@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +34,10 @@ from backend.app.services.bambu_ftp import (
 )
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.notification_service import notification_service
+from backend.app.services.printer_files import (
+    delete_printer_file as provider_delete_printer_file,
+    upload_printer_file as provider_upload_printer_file,
+)
 from backend.app.services.printer_manager import (
     printer_manager,
     supports_airduct,
@@ -41,6 +46,7 @@ from backend.app.services.printer_manager import (
     supports_drying,
     supports_drying_while_printing,
 )
+from backend.app.services.printer_providers import PROVIDER_KLIPPER, provider_for_printer
 from backend.app.services.smart_plug_manager import smart_plug_manager
 from backend.app.utils.filename import derive_remote_filename
 from backend.app.utils.printer_models import is_gcode_compatible, normalize_printer_model
@@ -669,7 +675,21 @@ class PrintScheduler:
                     elif item.library_file and item.library_file.file_metadata:
                         sliced_for = item.library_file.file_metadata.get("sliced_for_model")
 
-                    if not is_gcode_compatible(sliced_for, item.target_model):
+                    model_candidates = (
+                        await db.execute(
+                            select(Printer).where(Printer.model == item.target_model).where(Printer.is_active.is_(True))
+                        )
+                    ).scalars()
+                    if any(provider_for_printer(candidate) == PROVIDER_KLIPPER for candidate in model_candidates):
+                        printer_id = None
+                        waiting_reason = (
+                            "Klipper jobs require an exact printer and linked Orca preset; "
+                            "edit this item and select a specific printer"
+                        )
+                        skip_reasons["klipper_exact_printer_required"] = (
+                            skip_reasons.get("klipper_exact_printer_required", 0) + 1
+                        )
+                    elif not is_gcode_compatible(sliced_for, item.target_model):
                         printer_id = None
                         waiting_reason = (
                             f"File was sliced for {sliced_for}, which is not compatible with "
@@ -3236,16 +3256,21 @@ class PrintScheduler:
                 await self._power_off_if_needed(db, item)
                 return
 
+        provider = provider_for_printer(printer)
+
         # Preheat / heat-soak (#1468) — fires before upload so the printer's
         # bed (and chamber, if applicable) is at temperature when the firmware
         # starts the actual print routine. Best-effort: any failure logs and
         # falls through to the normal upload+start path rather than turning a
         # configuration issue into a failed queue item.
-        await self._preheat_and_soak(db, item, printer, archive)
+        # Moonraker jobs retain the targets authored by the exact linked Orca
+        # profile. Do not apply Bambu's queue-time chamber/bed preheat logic.
+        if provider != PROVIDER_KLIPPER:
+            await self._preheat_and_soak(db, item, printer, archive)
 
         # G-code injection for auto-print systems (#422)
         injected_path = None
-        if item.gcode_injection:
+        if item.gcode_injection and provider != PROVIDER_KLIPPER:
             try:
                 snippets_raw = await self._get_setting(db, "gcode_snippets")
                 if snippets_raw:
@@ -3269,9 +3294,62 @@ class PrintScheduler:
             except Exception as e:
                 logger.warning("Queue item %s: G-code injection failed, using original: %s", item.id, e)
 
-        # Upload to root directory (not /cache/) - the start_print command references
-        # files by name only (ftp://{filename}), so they must be in the root
-        remote_filename = derive_remote_filename(filename)
+        klipper_extracted_path: Path | None = None
+        if provider == PROVIDER_KLIPPER:
+            compatibility_error = None
+            if str(file_path).lower().endswith(".gcode"):
+                if not item.klipper_compatibility_acknowledged:
+                    compatibility_error = "Raw G-code compatibility was not acknowledged for this exact Klipper printer"
+            else:
+                from backend.app.utils.threemf_tools import extract_embedded_presets_from_3mf
+
+                embedded_preset = None
+                try:
+                    with zipfile.ZipFile(file_path, "r") as source_archive:
+                        embedded_preset = extract_embedded_presets_from_3mf(source_archive).get("printer")
+                except (OSError, zipfile.BadZipFile):
+                    pass
+                linked_preset = (printer.slicer_preset_id or "").strip()
+                if not linked_preset or not embedded_preset or embedded_preset.strip() != linked_preset:
+                    compatibility_error = (
+                        f"File profile {embedded_preset or 'unknown'} does not exactly match "
+                        f"{linked_preset or 'the printer linked preset'}"
+                    )
+            if compatibility_error:
+                item.status = "failed"
+                item.error_message = compatibility_error
+                item.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+                logger.warning("Queue item %s: %s", item.id, compatibility_error)
+                await self._power_off_if_needed(db, item)
+                return
+
+            if str(file_path).lower().endswith(".gcode"):
+                remote_filename = Path(filename).name
+            else:
+                from backend.app.utils.threemf_tools import extract_plate_gcode_to_temp
+
+                try:
+                    klipper_extracted_path = extract_plate_gcode_to_temp(file_path, item.plate_id or 1)
+                except (OSError, ValueError, zipfile.BadZipFile) as exc:
+                    if injected_path and injected_path.exists():
+                        injected_path.unlink(missing_ok=True)
+                    item.status = "failed"
+                    item.error_message = f"Could not extract plate G-code for Moonraker: {exc}"
+                    item.completed_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    await self._power_off_if_needed(db, item)
+                    return
+                file_path = klipper_extracted_path
+                stem = filename
+                for suffix in (".gcode.3mf", ".3mf"):
+                    if stem.lower().endswith(suffix):
+                        stem = stem[: -len(suffix)]
+                        break
+                remote_filename = f"{stem}.gcode"
+        else:
+            # Bambu starts the 3MF from the SD-card root by filename.
+            remote_filename = derive_remote_filename(filename)
         remote_path = f"/{remote_filename}"
 
         # Get FTP retry settings
@@ -3299,13 +3377,16 @@ class PrintScheduler:
         # Delete existing file if present (avoids 553 error on overwrite)
         try:
             logger.debug("Queue item %s: Deleting existing file %s if present...", item.id, remote_path)
-            delete_result = await delete_file_async(
-                printer.ip_address,
-                printer.access_code,
-                remote_path,
-                socket_timeout=ftp_timeout,
-                printer_model=printer.model,
-            )
+            if provider == PROVIDER_KLIPPER:
+                delete_result = await provider_delete_printer_file(printer, remote_path)
+            else:
+                delete_result = await delete_file_async(
+                    printer.ip_address,
+                    printer.access_code,
+                    remote_path,
+                    socket_timeout=ftp_timeout,
+                    printer_model=printer.model,
+                )
             logger.debug("Queue item %s: Delete result: %s", item.id, delete_result)
         except Exception as e:
             logger.debug("Queue item %s: Delete failed (may not exist): %s", item.id, e)
@@ -3337,7 +3418,14 @@ class PrintScheduler:
         upload_error: str | None = None
 
         try:
-            if ftp_retry_enabled:
+            if provider == PROVIDER_KLIPPER:
+                uploaded = await provider_upload_printer_file(
+                    printer,
+                    file_path,
+                    remote_path,
+                    on_progress=progress_bridge,
+                )
+            elif ftp_retry_enabled:
                 uploaded = await with_ftp_retry(
                     upload_file_async,
                     printer.ip_address,
@@ -3377,6 +3465,8 @@ class PrintScheduler:
         # Clean up injected temp file after upload attempt
         if injected_path and injected_path.exists():
             injected_path.unlink(missing_ok=True)
+        if klipper_extracted_path and klipper_extracted_path.exists():
+            klipper_extracted_path.unlink(missing_ok=True)
 
         if not uploaded:
             error_msg = upload_error or (
@@ -3470,13 +3560,16 @@ class PrintScheduler:
                 item.id,
             )
             try:
-                await delete_file_async(
-                    printer.ip_address,
-                    printer.access_code,
-                    remote_path,
-                    socket_timeout=ftp_timeout,
-                    printer_model=printer.model,
-                )
+                if provider == PROVIDER_KLIPPER:
+                    await provider_delete_printer_file(printer, remote_path)
+                else:
+                    await delete_file_async(
+                        printer.ip_address,
+                        printer.access_code,
+                        remote_path,
+                        socket_timeout=ftp_timeout,
+                        printer_model=printer.model,
+                    )
             except Exception as cleanup_err:
                 logger.debug(
                     "Queue item %s: best-effort cleanup of uploaded file failed: %s",
@@ -3504,11 +3597,11 @@ class PrintScheduler:
                     cleanup_path.unlink()
             except OSError as cleanup_err:
                 logger.warning(
-                    "TRANSIENT_LIBRARY_FILE_ORPHAN %s",
+                    "TRANSIENT_LIBRARY_FILE_ORPHAN path=%s details=%s",
+                    cleanup_path,
                     json.dumps(
                         {
                             "queue_item_id": item.id,
-                            "path": str(cleanup_path),
                             "error": str(cleanup_err),
                         },
                         sort_keys=True,
@@ -3569,7 +3662,7 @@ class PrintScheduler:
             # Register the local 3MF in the cover-cache so /cover skips FTP
             # (#1166 follow-up). file_path was resolved earlier from either the
             # archive or the library file row.
-            if file_path is not None:
+            if file_path is not None and provider != PROVIDER_KLIPPER:
                 cache_3mf_download(item.printer_id, remote_filename, file_path)
 
             # Hold the printer against further dispatches until the watchdog
@@ -3643,12 +3736,15 @@ class PrintScheduler:
         else:
             # Clean up uploaded file from SD card to prevent phantom prints
             try:
-                await delete_file_async(
-                    printer.ip_address,
-                    printer.access_code,
-                    remote_path,
-                    printer_model=printer.model,
-                )
+                if provider == PROVIDER_KLIPPER:
+                    await provider_delete_printer_file(printer, remote_path)
+                else:
+                    await delete_file_async(
+                        printer.ip_address,
+                        printer.access_code,
+                        remote_path,
+                        printer_model=printer.model,
+                    )
             except Exception:
                 pass  # Best-effort — don't fail the error handler
 

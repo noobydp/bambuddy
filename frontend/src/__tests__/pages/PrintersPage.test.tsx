@@ -1370,6 +1370,86 @@ describe('PrintersPage', () => {
 
 });
 
+describe('Klipper printer controls', () => {
+  it('renders discovered Moonraker state and keeps unsafe actions guarded', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('printerCardSize', '2');
+    const printer = {
+      ...mockPrinters[0],
+      id: 30,
+      name: 'TinyT',
+      provider: 'klipper',
+      model: 'Klipper',
+      serial_number: 'KLIPPER-TEST',
+      connection_port: 7125,
+    };
+    server.use(
+      http.get('/api/v1/printers/', () => HttpResponse.json([printer])),
+      http.get('/api/v1/printers/:id/status', () => HttpResponse.json({
+        ...mockPrinterStatus,
+        provider: 'klipper',
+        tools: [
+          { id: 'T0', index: 0, label: 'T0', temperature: 24, target_temperature: 0, active: true },
+          { id: 'T1', index: 1, label: 'T1', temperature: 24, target_temperature: 0, active: false },
+        ],
+        heaters: [],
+        fans: [{ id: 'fan', label: 'Part fan', speed_percent: 0, active: false, controllable: true }],
+        sensors: [{ id: 'filament', label: 'T0 filament', kind: 'filament', value: true, triggered: true }],
+        motion: {
+          position: { x: 10, y: 20, z: 30 },
+          homed_axes: ['x', 'y'],
+          speed_factor_percent: 100,
+          flow_factor_percent: 100,
+          kinematics: 'corexy',
+          leveling_method: 'z_tilt',
+        },
+        device_info: { vendor: 'Klipper', model: 'Klipper', klipper_version: 'v0.13' },
+        capabilities: {
+          can_pause: true,
+          can_resume: true,
+          can_stop: true,
+          can_home_axes: true,
+          can_set_fan: true,
+          can_set_speed_factor: true,
+          can_set_flow_factor: true,
+          can_jog_axes: true,
+          can_level_gantry: true,
+          can_calibrate_bed_mesh: true,
+          can_select_tool: true,
+          can_run_gcode: true,
+          can_emergency_stop: true,
+        },
+      })),
+      http.get('/api/v1/printers/:id/klipper/diagnostics', () => HttpResponse.json({
+        connected: true,
+        endpoint: '192.0.2.30:7125',
+        api_key_configured: false,
+        objects: ['toolchanger', 'tool T0', 'tool T1', 'z_tilt'],
+        macros: ['PRINT_START'],
+        webcams: [],
+        toolchanger_ready: true,
+        device_info: {},
+      })),
+      http.get('/api/v1/printers/:id/klipper/history', () => HttpResponse.json({
+        jobs: [{ job_id: 'one', filename: 'cube.gcode', status: 'completed', print_duration: 60 }],
+      })),
+      http.get('/api/v1/printers/:id/klipper/console/history', () => HttpResponse.json({ history: [] })),
+    );
+
+    render(<PrintersPage />);
+    await screen.findByText('TinyT');
+    await user.click(await screen.findByTitle(/more/i));
+    await user.click(screen.getByRole('button', { name: 'Klipper controls' }));
+
+    expect(await screen.findByText('Klipper controls — TinyT')).toBeInTheDocument();
+    expect(screen.getByText('T0 filament')).toBeInTheDocument();
+    expect(screen.getByText('cube.gcode')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'T1' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Emergency stop' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'I understand the risk' })).toBeInTheDocument();
+  });
+});
+
 /**
  * Phase 13 P13-1 (PrintersPage EmptySlotHoverCard onAssignSpool gate removal)
  *

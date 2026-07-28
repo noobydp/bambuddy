@@ -9,11 +9,14 @@ import json
 import math
 import zipfile
 
+import pytest
+
 from backend.app.utils.threemf_tools import (
     extract_bed_type_from_3mf,
     extract_embedded_presets_from_3mf,
     extract_filament_usage_from_3mf,
     extract_plate_extruder_set_from_3mf,
+    extract_plate_gcode_to_temp,
     extract_print_time_from_3mf,
     extract_project_filaments_from_3mf,
     extract_support_filament_slots_from_3mf,
@@ -21,6 +24,30 @@ from backend.app.utils.threemf_tools import (
     mm_to_grams,
     parse_gcode_layer_filament_usage,
 )
+
+
+class TestExtractPlateGcodeToTemp:
+    def test_extracts_selected_plate_and_leaves_source_intact(self, tmp_path):
+        source = tmp_path / "multi.gcode.3mf"
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr("Metadata/plate_1.gcode", "; plate one\nM115\n")
+            archive.writestr("Metadata/plate_2.gcode", "; plate two\nM115\n")
+
+        extracted = extract_plate_gcode_to_temp(source, plate_id=2)
+        try:
+            assert extracted.read_text(encoding="utf-8") == "; plate two\nM115\n"
+            assert source.exists()
+        finally:
+            extracted.unlink(missing_ok=True)
+
+    def test_rejects_missing_plate_in_multi_plate_archive(self, tmp_path):
+        source = tmp_path / "multi.gcode.3mf"
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr("Metadata/plate_1.gcode", "; plate one")
+            archive.writestr("Metadata/plate_2.gcode", "; plate two")
+
+        with pytest.raises(ValueError, match="Plate 3"):
+            extract_plate_gcode_to_temp(source, plate_id=3)
 
 
 def create_mock_3mf(slice_info_content: str) -> io.BytesIO:

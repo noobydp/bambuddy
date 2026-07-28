@@ -307,6 +307,22 @@ export function SettingsPage() {
   });
 
   const {
+    data: slicerSidecarHealth,
+    isFetching: slicerSidecarChecking,
+    refetch: retestSlicerSidecar,
+  } = useQuery({
+    queryKey: [
+      'slicer-sidecar-health',
+      localSettings?.preferred_slicer,
+      localSettings?.orcaslicer_api_url,
+      localSettings?.bambu_studio_api_url,
+    ],
+    queryFn: api.testSlicerSidecar,
+    enabled: activeTab === 'queue' && localSettings?.use_slicer_api === true,
+    refetchInterval: 30000,
+  });
+
+  const {
     data: storageUsage,
     isLoading: storageUsageLoading,
     isFetching: storageUsageFetching,
@@ -4833,6 +4849,25 @@ export function SettingsPage() {
                       'URL of the slicer-API sidecar container. Leave blank to use the SLICER_API_URL / BAMBU_STUDIO_API_URL env var defaults.',
                     )}
                   </p>
+                  <div className="mt-2 flex items-center gap-2 text-xs">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={slicerSidecarChecking}
+                      onClick={() => { void retestSlicerSidecar(); }}
+                    >
+                      {slicerSidecarChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                      Test connection
+                    </Button>
+                    {slicerSidecarHealth && (
+                      <span className={slicerSidecarHealth.success ? 'text-green-400' : 'text-amber-400'}>
+                        {slicerSidecarHealth.success
+                          ? `Connected${typeof slicerSidecarHealth.health?.version === 'string' ? ` · ${slicerSidecarHealth.health.version}` : ''}`
+                          : slicerSidecarHealth.message || 'Sidecar unavailable'}
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </CardContent>

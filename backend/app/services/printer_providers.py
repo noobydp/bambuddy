@@ -12,7 +12,8 @@ from typing import Final
 
 PROVIDER_BAMBU: Final = "bambu"
 PROVIDER_FLASHFORGE: Final = "flashforge"
-SUPPORTED_PROVIDERS: Final = frozenset({PROVIDER_BAMBU, PROVIDER_FLASHFORGE})
+PROVIDER_KLIPPER: Final = "klipper"
+SUPPORTED_PROVIDERS: Final = frozenset({PROVIDER_BAMBU, PROVIDER_FLASHFORGE, PROVIDER_KLIPPER})
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,9 @@ class PrinterProviderDescriptor:
     serial_label: str
     models: tuple[str, ...]
     discovery_ports: tuple[int, ...]
+    default_port: int | None = None
+    serial_required: bool = True
+    credential_required: bool = True
 
 
 PROVIDER_DESCRIPTORS: Final = (
@@ -48,6 +52,7 @@ PROVIDER_DESCRIPTORS: Final = (
             "H2S",
         ),
         discovery_ports=(8883, 990),
+        default_port=8883,
     ),
     PrinterProviderDescriptor(
         key=PROVIDER_FLASHFORGE,
@@ -56,6 +61,18 @@ PROVIDER_DESCRIPTORS: Final = (
         serial_label="Serial Number",
         models=("FlashForge Creator 5 Pro",),
         discovery_ports=(8898, 8080),
+        default_port=8898,
+    ),
+    PrinterProviderDescriptor(
+        key=PROVIDER_KLIPPER,
+        name="Klipper / Moonraker",
+        credential_label="Moonraker API Key",
+        serial_label="Moonraker Hostname",
+        models=("Klipper",),
+        discovery_ports=(7125,),
+        default_port=7125,
+        serial_required=False,
+        credential_required=False,
     ),
 )
 
@@ -98,6 +115,10 @@ def is_flashforge_provider(provider: str | None, model: str | None = None) -> bo
     return normalize_printer_provider(provider, model) == PROVIDER_FLASHFORGE
 
 
+def is_klipper_provider(provider: str | None, model: str | None = None) -> bool:
+    return normalize_printer_provider(provider, model) == PROVIDER_KLIPPER
+
+
 def provider_descriptors() -> list[dict]:
     """Return setup metadata safe to expose through the public API."""
     return [
@@ -108,6 +129,9 @@ def provider_descriptors() -> list[dict]:
             "serial_label": descriptor.serial_label,
             "models": list(descriptor.models),
             "discovery_ports": list(descriptor.discovery_ports),
+            "default_port": descriptor.default_port,
+            "serial_required": descriptor.serial_required,
+            "credential_required": descriptor.credential_required,
         }
         for descriptor in PROVIDER_DESCRIPTORS
     ]
