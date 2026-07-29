@@ -239,15 +239,16 @@ Bambuddy includes experimental FlashForge LAN support for confirmed compatible m
 - Mobile-friendly with always-visible action buttons
 - **Server-side Slice button** (optional) — slice STL/3MF without a desktop slicer when the [`slicer-api/` Compose stack](slicer-api/README.md) is running; the result lands as a new `.gcode.3mf` in the same folder, with progress shown via a toast tracker that follows the job to completion. Supports importing **Bambu Studio Printer Preset Bundles** (`.bbscfg`) so a curated printer + process + filament triplet can be picked in the Slice dialog without re-uploading JSON profiles ([details](https://wiki.bambuddy.cool/features/slicer-api/#slicer-bundles-bbscfg))
 
-### 🌍 MakerWorld Integration
-- Paste any `makerworld.com/models/…` URL → preview, plate picker, and import without leaving Bambuddy
+### 🌍 MakerWorld & Printables Integration
+- Paste any `makerworld.com/models/…` or `printables.com/model/…` URL → preview and import without leaving Bambuddy
 - Per-plate **Save** or **Save & Slice in Bambu Studio / OrcaSlicer** (your preferred slicer from Settings)
 - **Import all plates** button for multi-plate models
 - Auto-creates a "MakerWorld" folder in File Manager; override with any existing folder via the picker
+- Printables models expose each supported STL/3MF/STEP file individually, including its format and size, and import into a dedicated "Printables" folder
+- Public Printables downloads work anonymously; MakerWorld downloads continue to reuse your existing Bambu Cloud login
 - Per-plate image gallery with keyboard-navigable lightbox
-- Recent imports sidebar — last 10 MakerWorld imports with one-click jump to File Manager or slicer
+- Recent imports sidebar — last 10 imports from either provider with one-click jump to File Manager, slicer, or the source model
 - Remove-from-library for imported plates with confirm modal (no LAN cookie paste, no browser extension)
-- Reuses your existing Bambu Cloud login — no separate OAuth flow or browser extension to install
 
 ### 📁 Projects
 - Group related prints (e.g., "Voron Build")

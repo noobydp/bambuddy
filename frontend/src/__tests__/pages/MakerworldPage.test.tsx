@@ -21,8 +21,10 @@ const statusWithToken = { has_cloud_token: true, can_download: true };
 
 function resolveResponse(overrides: Partial<Record<string, unknown>> = {}) {
   return {
+    provider: 'makerworld',
     model_id: 1400373,
     profile_id: 1452154,
+    source_url: 'https://makerworld.com/models/1400373#profileId-1452154',
     design: {
       id: 1400373,
       title: 'Seed Starter',
@@ -85,8 +87,14 @@ describe('MakerworldPage', () => {
   it('renders the sign-in-required banner when no Bambu Cloud token is stored', async () => {
     server.use(
       http.get('*/makerworld/status', () => HttpResponse.json(statusNoToken)),
+      http.post('*/makerworld/resolve', () => HttpResponse.json(resolveResponse())),
     );
     render(<MakerworldPage />);
+    await userEvent.type(
+      await screen.findByPlaceholderText(/makerworld\.com/i),
+      'https://makerworld.com/en/models/1400373',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
     expect(await screen.findByText(/Bambu Cloud sign-in required/i)).toBeInTheDocument();
   });
 
@@ -94,7 +102,7 @@ describe('MakerworldPage', () => {
     useAuthedHandlers();
     render(<MakerworldPage />);
     // Page header is always visible; wait for status to settle
-    await screen.findByRole('heading', { name: 'MakerWorld' });
+    await screen.findByRole('heading', { name: 'MakerWorld & Printables' });
     await waitFor(() => {
       expect(screen.queryByText(/Bambu Cloud sign-in required/i)).not.toBeInTheDocument();
     });
@@ -111,7 +119,7 @@ describe('MakerworldPage', () => {
     );
     render(<MakerworldPage />);
 
-    const input = await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i);
+    const input = await screen.findByPlaceholderText(/makerworld\.com/i);
     await userEvent.type(input, 'https://makerworld.com/en/models/1400373-slug#profileId-1452154');
     await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
 
@@ -129,7 +137,7 @@ describe('MakerworldPage', () => {
     );
     render(<MakerworldPage />);
     await userEvent.type(
-      await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i),
+      await screen.findByPlaceholderText(/makerworld\.com/i),
       'https://makerworld.com/en/models/1400373',
     );
     await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
@@ -143,7 +151,7 @@ describe('MakerworldPage', () => {
     );
     render(<MakerworldPage />);
     await userEvent.type(
-      await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i),
+      await screen.findByPlaceholderText(/makerworld\.com/i),
       'https://makerworld.com/en/models/1400373',
     );
     await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
@@ -161,7 +169,7 @@ describe('MakerworldPage', () => {
     );
     render(<MakerworldPage />);
     await userEvent.type(
-      await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i),
+      await screen.findByPlaceholderText(/makerworld\.com/i),
       'https://makerworld.com/en/models/1400373',
     );
     await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
@@ -179,7 +187,7 @@ describe('MakerworldPage', () => {
     );
     render(<MakerworldPage />);
     await userEvent.type(
-      await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i),
+      await screen.findByPlaceholderText(/makerworld\.com/i),
       'https://makerworld.com/en/models/1400373',
     );
     await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
@@ -197,7 +205,7 @@ describe('MakerworldPage', () => {
     );
     render(<MakerworldPage />);
 
-    const input = await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i);
+    const input = await screen.findByPlaceholderText(/makerworld\.com/i);
     await userEvent.type(input, 'https://makerworld.com/en/models/1400373');
     await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
 
@@ -230,7 +238,7 @@ describe('MakerworldPage', () => {
     render(<MakerworldPage />);
 
     await userEvent.type(
-      await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i),
+      await screen.findByPlaceholderText(/makerworld\.com/i),
       'https://makerworld.com/en/models/1400373',
     );
     await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
@@ -249,6 +257,7 @@ describe('MakerworldPage', () => {
     useAuthedHandlers({
       recent: [
         {
+          provider: 'makerworld',
           library_file_id: 11,
           filename: 'first-import.3mf',
           folder_id: 2,
@@ -257,6 +266,7 @@ describe('MakerworldPage', () => {
           created_at: '2025-01-01T12:00:00',
         },
         {
+          provider: 'makerworld',
           library_file_id: 12,
           filename: 'second-import.3mf',
           folder_id: 2,
@@ -279,9 +289,91 @@ describe('MakerworldPage', () => {
     useAuthedHandlers({ recent: [] });
     render(<MakerworldPage />);
 
-    await screen.findByRole('heading', { name: 'MakerWorld' });
+    await screen.findByRole('heading', { name: 'MakerWorld & Printables' });
     await waitFor(() => {
       expect(screen.queryByText(/Recent imports/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('resolves and imports a Printables file without Bambu Cloud sign-in', async () => {
+    let importBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('*/makerworld/status', () => HttpResponse.json(statusNoToken)),
+      http.get('*/makerworld/recent-imports', () => HttpResponse.json([])),
+      http.get('*/library/folders', () => HttpResponse.json([])),
+      http.get('*/settings/', () =>
+        HttpResponse.json({
+          auto_archive: true,
+          save_thumbnails: true,
+          preferred_slicer: 'orcaslicer',
+        }),
+      ),
+      http.post('*/makerworld/resolve', () =>
+        HttpResponse.json({
+          provider: 'printables',
+          model_id: 180860,
+          profile_id: null,
+          source_url:
+            'https://www.printables.com/model/180860-cartridge-holders',
+          design: {
+            id: 180860,
+            title: 'Cartridge holders',
+            designCreator: { name: 'PaSe' },
+            coverUrl:
+              'https://media.printables.com/media/prints/180860/cover.jpg',
+            license: 'GPL v2',
+            downloadCount: 217,
+            summary: '<p>Useful holders</p>',
+          },
+          instances: [
+            {
+              id: 764187,
+              profileId: 764187,
+              title: 'SiliconeCartridgeHolder5.stl',
+              cover: '',
+              fileSize: 297884,
+              fileExtension: 'STL',
+            },
+          ],
+          already_imported_library_ids: [],
+        }),
+      ),
+      http.post('*/makerworld/import', async ({ request }) => {
+        importBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          library_file_id: 77,
+          filename: 'SiliconeCartridgeHolder5.stl',
+          folder_id: 8,
+          profile_id: 764187,
+          was_existing: false,
+        });
+      }),
+    );
+
+    render(<MakerworldPage />);
+    await userEvent.type(
+      await screen.findByPlaceholderText(/printables\.com/i),
+      'https://www.printables.com/model/180860-cartridge-holders',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
+
+    expect(await screen.findByText('Cartridge holders')).toBeInTheDocument();
+    expect(screen.getByText('SiliconeCartridgeHolder5.stl')).toBeInTheDocument();
+    expect(screen.getByText('STL')).toBeInTheDocument();
+    expect(screen.getByText('290.9 KB')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Bambu Cloud sign-in required/i),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole('button', { name: /^Save$/ }),
+    );
+    await waitFor(() => {
+      expect(importBody).toMatchObject({
+        provider: 'printables',
+        model_id: 180860,
+        instance_id: 764187,
+      });
     });
   });
 
@@ -304,7 +396,7 @@ describe('MakerworldPage', () => {
     );
     render(<MakerworldPage />);
     await userEvent.type(
-      await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i),
+      await screen.findByPlaceholderText(/makerworld\.com/i),
       'https://makerworld.com/en/models/1400373',
     );
     await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));

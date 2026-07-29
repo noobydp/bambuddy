@@ -6217,12 +6217,16 @@ async def lifespan(app: FastAPI):
     from backend.app.services.orca_cloud import (
         set_shared_http_client as set_shared_orca_http_client,
     )
+    from backend.app.services.printables import (
+        set_shared_http_client as set_shared_printables_http_client,
+    )
 
     _shared_cloud_http_client = _httpx.AsyncClient(timeout=30.0)
     set_shared_http_client(_shared_cloud_http_client)
     # Reuse the same connection pool for MakerWorld — different host, same
     # keep-alive pool saves a TLS handshake per request.
     set_shared_makerworld_http_client(_shared_cloud_http_client)
+    set_shared_printables_http_client(_shared_cloud_http_client)
     # Same for Orca Cloud — without this the per-request OrcaCloudService()
     # each spun up (and never closed) its own client, leaking sockets.
     set_shared_orca_http_client(_shared_cloud_http_client)
@@ -6600,6 +6604,7 @@ async def lifespan(app: FastAPI):
     # Drop the shared Bambu Cloud HTTP client we registered at startup.
     set_shared_http_client(None)
     set_shared_makerworld_http_client(None)
+    set_shared_printables_http_client(None)
     set_shared_orca_http_client(None)
     await _shared_cloud_http_client.aclose()
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -27,7 +27,7 @@ from backend.app.api.routes.cloud import (
     mark_cloud_token_invalid,
     resolve_api_key_cloud_owner,
 )
-from backend.app.api.routes.library import save_3mf_bytes_to_library
+from backend.app.api.routes.library import save_3mf_bytes_to_library, save_print_bytes_to_library
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
@@ -50,12 +50,36 @@ from backend.app.services.makerworld import (
     MakerWorldUnavailableError,
     MakerWorldUrlError,
 )
+from backend.app.services.printables import (
+    PRINTABLES_HOSTS,
+    PRINTABLES_MEDIA_HOSTS,
+    PrintablesError,
+    PrintablesForbiddenError,
+    PrintablesNotFoundError,
+    PrintablesService,
+    PrintablesUnavailableError,
+    PrintablesUrlError,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/makerworld", tags=["makerworld"])
 
 _SOURCE_TYPE = "makerworld"
+_PRINTABLES_SOURCE_TYPE = "printables"
+
+
+def _provider_for_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        raise MakerWorldUrlError("Enter a MakerWorld or Printables model URL")
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    host = (parsed.hostname or "").lower()
+    if host in PRINTABLES_HOSTS:
+        return _PRINTABLES_SOURCE_TYPE
+    if host == "makerworld.com" or host.endswith(".makerworld.com"):
+        return _SOURCE_TYPE
+    raise MakerWorldUrlError("URL must be a MakerWorld or Printables model page")
 
 
 async def _build_service(db: AsyncSession, user: User | None) -> MakerWorldService:
@@ -111,31 +135,43 @@ def _map_service_error(exc: MakerWorldError) -> HTTPException:
     return HTTPException(status_code=500, detail=f"MakerWorld error: {exc}")
 
 
+def _map_printables_error(exc: PrintablesError) -> HTTPException:
+    if isinstance(exc, PrintablesUrlError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, PrintablesForbiddenError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, PrintablesNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, PrintablesUnavailableError):
+        return HTTPException(status_code=502, detail=str(exc))
+    return HTTPException(status_code=500, detail=f"Printables error: {exc}")
+
+
 @router.get("/thumbnail")
 async def proxy_thumbnail(
-    url: str = Query(..., description="MakerWorld CDN image URL (makerworld.bblmw.com or public-cdn.bblmw.com)"),
+    url: str = Query(..., description="MakerWorld or Printables public image URL"),
 ):
-    """Proxy a MakerWorld CDN thumbnail.
+    """Proxy a MakerWorld or Printables CDN thumbnail.
 
-    The SPA's ``img-src`` CSP only allows ``'self' data: blob:`` — hotlinking
-    from makerworld.bblmw.com is blocked. This endpoint refetches the image
-    server-side and returns it with a long cache window.
+    The SPA's ``img-src`` CSP only allows ``'self' data: blob:`` — provider
+    CDNs are therefore proxied server-side with a long cache window.
 
     **Unauthenticated on purpose**: ``<img>`` tags can't send Authorization
-    headers, so requiring a Bearer token here would break the whole feature
-    (browsers would get 401 on every image, rendering as broken-image
-    placeholders). The thumbnails being proxied are MakerWorld's *public*
-    CDN — any visitor to makerworld.com can fetch them without auth — so no
-    data is exposed. The SSRF guard inside ``fetch_thumbnail`` restricts
-    the upstream host to the MakerWorld CDN allowlist, so this can't be
-    abused as a generic open proxy.
+    headers, so requiring a Bearer token here would break the whole feature.
+    Both providers' thumbnails are public. Each service restricts the
+    upstream host to its own CDN allowlist, so this cannot become a generic
+    open proxy.
 
     URLs are content-addressable (filename contains a hash), so the
     aggressive ``immutable`` cache-control is safe.
     """
-    service = MakerWorldService()
+    host = (urlparse(url).hostname or "").lower()
+    is_printables = host in PRINTABLES_MEDIA_HOSTS
+    service = PrintablesService() if is_printables else MakerWorldService()
     try:
         payload, content_type = await service.fetch_thumbnail(url)
+    except PrintablesError as exc:
+        raise _map_printables_error(exc) from exc
     except MakerWorldError as exc:
         raise _map_service_error(exc) from exc
     finally:
@@ -186,12 +222,49 @@ async def resolve_url(
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.MAKERWORLD_VIEW),
     api_key_cloud_owner: User | None = Depends(resolve_api_key_cloud_owner),
 ):
-    """Resolve a MakerWorld URL to full model metadata + plate list.
+    """Resolve a MakerWorld or Printables URL to model metadata + files.
 
     The response also tells the caller which (if any) LibraryFile rows already
     exist for the same model URL, so the UI can show an "Already imported"
     badge and skip a redundant download.
     """
+    try:
+        provider = _provider_for_url(body.url)
+    except MakerWorldError as exc:
+        raise _map_service_error(exc) from exc
+
+    if provider == _PRINTABLES_SOURCE_TYPE:
+        try:
+            model_id = PrintablesService.parse_url(body.url)
+        except PrintablesError as exc:
+            raise _map_printables_error(exc) from exc
+
+        service = PrintablesService()
+        try:
+            model = await service.get_model(model_id)
+        except PrintablesError as exc:
+            raise _map_printables_error(exc) from exc
+        finally:
+            await service.close()
+
+        model_prefix = f"https://www.printables.com/model/{model_id}#file-"
+        existing_q = await db.execute(
+            select(LibraryFile.id).where(
+                LibraryFile.source_type == _PRINTABLES_SOURCE_TYPE,
+                LibraryFile.source_url.like(f"{model_prefix}%"),
+                LibraryFile.deleted_at.is_(None),
+            )
+        )
+        return MakerWorldResolvedModel(
+            provider="printables",
+            model_id=model_id,
+            profile_id=None,
+            design=PrintablesService.normalize_design(model),
+            instances=PrintablesService.list_supported_files(model),
+            source_url=PrintablesService.canonical_url(model),
+            already_imported_library_ids=[row[0] for row in existing_q.all()],
+        )
+
     try:
         model_id, profile_id = MakerWorldService.parse_url(body.url)
     except MakerWorldError as exc:
@@ -260,10 +333,12 @@ async def resolve_url(
     already_imported = [row[0] for row in existing_q.all()]
 
     return MakerWorldResolvedModel(
+        provider="makerworld",
         model_id=model_id,
         profile_id=profile_id,
         design=design,
         instances=instances,
+        source_url=_canonical_url(model_id, profile_id),
         already_imported_library_ids=already_imported,
     )
 
@@ -275,13 +350,13 @@ async def import_instance(
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.MAKERWORLD_IMPORT),
     api_key_cloud_owner: User | None = Depends(resolve_api_key_cloud_owner),
 ):
-    """Download a specific MakerWorld instance (plate configuration) and save
-    the 3MF into the library.
+    """Download a selected MakerWorld plate or Printables model file.
 
-    De-duplicates by canonicalised source URL — if the same MakerWorld model
-    was imported before (any plate), that existing LibraryFile is returned and
-    no new download happens.
+    De-duplicates by canonicalised source URL. MakerWorld keys by plate and
+    Printables keys by model-file ID, so importing one file never masks a
+    different file from the same model.
     """
+    default_folder_name = "Printables" if body.provider == _PRINTABLES_SOURCE_TYPE else "MakerWorld"
     if body.folder_id is not None:
         folder_q = await db.execute(select(LibraryFolder).where(LibraryFolder.id == body.folder_id))
         target_folder = folder_q.scalar_one_or_none()
@@ -294,23 +369,77 @@ async def import_instance(
             )
         effective_folder_id: int | None = body.folder_id
     else:
-        # Default destination: a dedicated top-level "MakerWorld" folder. Keeps
+        # Default destination: a dedicated provider folder. Keeps
         # imports out of the library root so power users can still organise
         # manually in subfolders, and auto-creates the folder on the first
         # import so users don't have to set it up themselves.
         mw_folder_q = await db.execute(
             select(LibraryFolder).where(
-                LibraryFolder.name == "MakerWorld",
+                LibraryFolder.name == default_folder_name,
                 LibraryFolder.parent_id.is_(None),
                 LibraryFolder.is_external.is_(False),
             )
         )
         mw_folder = mw_folder_q.scalar_one_or_none()
         if mw_folder is None:
-            mw_folder = LibraryFolder(name="MakerWorld", parent_id=None)
+            mw_folder = LibraryFolder(name=default_folder_name, parent_id=None)
             db.add(mw_folder)
             await db.flush()
         effective_folder_id = mw_folder.id
+
+    if body.provider == _PRINTABLES_SOURCE_TYPE:
+        file_id = body.instance_id or body.profile_id
+        if file_id is None:
+            raise HTTPException(status_code=400, detail="Select a Printables model file to import")
+
+        service = PrintablesService()
+        try:
+            model = await service.get_model(body.model_id)
+            supported_files = service.list_supported_files(model)
+            selected_file = next(
+                (item for item in supported_files if item.get("id") == file_id),
+                None,
+            )
+            if selected_file is None:
+                raise PrintablesNotFoundError(f"Printables file {file_id} was not found on model {body.model_id}")
+
+            source_url = service.canonical_file_url(body.model_id, file_id)
+            existing_q = await db.execute(LibraryFile.active().where(LibraryFile.source_url == source_url).limit(1))
+            existing_row = existing_q.scalar_one_or_none()
+            if existing_row is not None:
+                return MakerWorldImportResponse(
+                    library_file_id=existing_row.id,
+                    filename=existing_row.filename,
+                    folder_id=existing_row.folder_id,
+                    profile_id=file_id,
+                    was_existing=True,
+                )
+
+            download_url = await service.get_download_link(body.model_id, file_id)
+            file_bytes = await service.download_model_file(download_url)
+        except PrintablesError as exc:
+            raise _map_printables_error(exc) from exc
+        finally:
+            await service.close()
+
+        filename = os.path.basename(unquote(str(selected_file["title"])))
+        owner = current_user or api_key_cloud_owner
+        library_file, was_existing = await save_print_bytes_to_library(
+            db,
+            file_bytes=file_bytes,
+            filename=filename,
+            folder_id=effective_folder_id,
+            source_type=_PRINTABLES_SOURCE_TYPE,
+            source_url=source_url,
+            owner_id=owner.id if owner else None,
+        )
+        return MakerWorldImportResponse(
+            library_file_id=library_file.id,
+            filename=library_file.filename,
+            folder_id=library_file.folder_id,
+            profile_id=file_id,
+            was_existing=was_existing,
+        )
 
     # API-keyed callers carry identity on the key, not in current_user — see
     # the /status handler comment and #1777 / #1182. The same resolved user
@@ -444,23 +573,24 @@ async def recent_imports(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.MAKERWORLD_VIEW),
 ):
-    """Last N MakerWorld imports, newest first.
+    """Last N MakerWorld and Printables imports, newest first.
 
-    Surfaces files whose ``source_type`` is ``"makerworld"`` so the MakerWorld
-    page can show a 'Recent imports' sidebar that persists across resolves.
+    The shared model-import page shows both provider source types so its
+    recent-import sidebar persists across resolves.
     ``limit`` is clamped to ``[1, 50]`` to keep payloads sensible.
     """
     _ = current_user  # permission gate only
     capped = max(1, min(50, int(limit)))
     result = await db.execute(
         LibraryFile.active()
-        .where(LibraryFile.source_type == _SOURCE_TYPE)
+        .where(LibraryFile.source_type.in_((_SOURCE_TYPE, _PRINTABLES_SOURCE_TYPE)))
         .order_by(LibraryFile.created_at.desc())
         .limit(capped)
     )
     rows = result.scalars().all()
     return [
         MakerWorldRecentImport(
+            provider=("printables" if row.source_type == _PRINTABLES_SOURCE_TYPE else "makerworld"),
             library_file_id=row.id,
             filename=row.filename,
             folder_id=row.folder_id,

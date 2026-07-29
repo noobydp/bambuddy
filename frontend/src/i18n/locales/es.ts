@@ -10,7 +10,7 @@ export default {
     projects: 'Proyectos',
     inventory: 'Filamento',
     files: 'Gestor de archivos',
-    makerworld: 'MakerWorld',
+    makerworld: 'Modelos',
     notifications: 'Notificaciones',
     settings: 'Ajustes',
     system: 'Sistema',
@@ -6541,10 +6541,10 @@ export default {
   },
 
   makerworld: {
-    title: 'MakerWorld',
-    description: 'Pegue la URL de un modelo de MakerWorld para importarlo e imprimirlo directamente desde Bambuddy — sin tener que salir a la aplicación Bambu Handy.',
-    pasteUrlHeader: 'Importar desde MakerWorld',
-    pasteUrlPlaceholder: 'https://makerworld.com/en/models/… o pegue cualquier enlace de MakerWorld',
+    title: 'Modelos de MakerWorld y Printables',
+    description: 'Pegue la URL de un modelo de MakerWorld o Printables para importar sus archivos imprimibles directamente en Bambuddy.',
+    pasteUrlHeader: 'Importar desde MakerWorld o Printables',
+    pasteUrlPlaceholder: 'Pegue un enlace de makerworld.com/models/… o printables.com/model/…',
     resolveButton: 'Resolver',
     signInRequiredTitle: 'Se requiere iniciar sesión en Bambu Cloud para descargar',
     signInRequiredBody: 'Puede explorar los detalles del modelo de forma anónima, pero MakerWorld requiere una cuenta de Bambu Cloud para descargar archivos 3MF.',

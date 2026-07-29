@@ -9,7 +9,7 @@ export default {
     projects: '프로젝트',
     inventory: '필라멘트',
     files: '파일 관리자',
-    makerworld: 'MakerWorld',
+    makerworld: '모델',
     notifications: '알림',
     settings: '설정',
     system: '시스템',
@@ -5979,10 +5979,10 @@ export default {
     noHistory: '아직 감지 없음.'
   },
   makerworld: {
-    title: 'MakerWorld',
-    description: 'MakerWorld 모델 URL을 붙여넣어 Bambu Handy 앱을 떠나지 않고 Bambuddy에서 직접 가져오고 인쇄하세요.',
-    pasteUrlHeader: 'MakerWorld에서 가져오기',
-    pasteUrlPlaceholder: 'https://makerworld.com/en/models/… 또는 MakerWorld 링크 붙여넣기',
+    title: 'MakerWorld 및 Printables 모델',
+    description: 'MakerWorld 또는 Printables 모델 URL을 붙여넣어 인쇄 가능한 파일을 Bambuddy로 직접 가져오세요.',
+    pasteUrlHeader: 'MakerWorld 또는 Printables에서 가져오기',
+    pasteUrlPlaceholder: 'makerworld.com/models/… 또는 printables.com/model/… 링크 붙여넣기',
     resolveButton: '확인',
     signInRequiredTitle: '다운로드하려면 Bambu 클라우드 로그인 필요',
     signInRequiredBody: '익명으로 모델 세부 정보를 탐색할 수 있지만 MakerWorld는 3MF 파일을 다운로드하려면 Bambu 클라우드 계정이 필요합니다.',

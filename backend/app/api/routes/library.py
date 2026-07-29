@@ -395,7 +395,7 @@ def _move_file_bytes(file: LibraryFile, target_folder: LibraryFolder | None) -> 
 def _clean_3mf_metadata(obj):
     """Strip bytes and thumbnail-carrier keys so the payload is JSON-storable.
 
-    Shared by ``upload_file`` and :func:`save_3mf_bytes_to_library` — the
+    Shared by ``upload_file`` and :func:`save_print_bytes_to_library` — the
     ``ThreeMFParser`` output embeds the thumbnail bytes under
     ``_thumbnail_data``/``_thumbnail_ext`` and may also include raw bytes in
     other fields, none of which can be JSON-encoded.
@@ -447,7 +447,7 @@ def _without_print_name(metadata: dict | None) -> dict | None:
     return {k: v for k, v in metadata.items() if k != "print_name"}
 
 
-async def save_3mf_bytes_to_library(
+async def save_print_bytes_to_library(
     db: AsyncSession,
     *,
     file_bytes: bytes,
@@ -457,18 +457,15 @@ async def save_3mf_bytes_to_library(
     source_url: str | None = None,
     owner_id: int | None = None,
 ) -> tuple[LibraryFile, bool]:
-    """Save a 3MF blob into the library and return ``(library_file, was_existing)``.
+    """Save a supported print file into the library.
 
-    Used by routes that receive a 3MF in-process rather than as a multipart
-    upload (currently: MakerWorld import; reusable for any future source that
-    fetches bytes server-side). Deduplicates by ``source_url`` when provided —
-    if a LibraryFile with the same source_url already exists, the existing
-    row is returned and the bytes are NOT re-saved (MakerWorld signed URLs
-    change each download, so hash-based dedupe alone would miss re-imports).
+    Used by provider routes that fetch bytes server-side (MakerWorld and
+    Printables). Deduplicates by ``source_url`` when provided. The same
+    filename/content checks and metadata/thumbnail extraction as multipart
+    uploads are applied so imported STL and 3MF files behave like ordinary
+    File Manager uploads.
 
-    Parses 3MF metadata + thumbnail the same way the multipart upload route
-    does, via :class:`ThreeMFParser`. Paths are stored as relative so the
-    library is portable across installs.
+    Paths are stored as relative so the library is portable across installs.
     """
     # Source-URL-based dedupe: return the existing row untouched.
     if source_url:
@@ -476,6 +473,12 @@ async def save_3mf_bytes_to_library(
         existing_row = existing.scalar_one_or_none()
         if existing_row is not None:
             return existing_row, True
+
+    try:
+        validate_print_filename(filename)
+    except InvalidFilenameError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    validate_print_file_upload(filename, file_bytes)
 
     # Resolve target folder so writable-external destinations land on the
     # mount with the real filename, instead of being silently misrouted to
@@ -491,13 +494,14 @@ async def save_3mf_bytes_to_library(
         target_folder = folder_q.scalar_one_or_none()
 
     file_path, is_external = _resolve_upload_destination(target_folder, filename)
-    ext = file_path.suffix.lower() or ".3mf"
+    ext = file_path.suffix.lower()
     with open(file_path, "wb") as fh:
         fh.write(file_bytes)
 
     file_hash = calculate_file_hash(file_path)
 
-    # Extract metadata + thumbnail from the 3MF.
+    # Extract metadata + thumbnail using the same format-specific paths as a
+    # multipart File Manager upload.
     metadata: dict | None = None
     thumbnail_path: str | None = None
     if ext == ".3mf":
@@ -519,6 +523,12 @@ async def save_3mf_bytes_to_library(
             # still land in the library so the user can see / delete it rather
             # than failing the whole request.
             logger.warning("Failed to parse 3MF %s: %s", filename, exc)
+    elif ext == ".stl":
+        try:
+            if file_path.stat().st_size >= MIN_USABLE_STL_BYTES:
+                thumbnail_path = generate_stl_thumbnail(file_path, get_library_thumbnails_dir())
+        except Exception as exc:  # noqa: BLE001 - thumbnail backends raise several optional-dependency errors
+            logger.warning("Failed to generate STL thumbnail for %s: %s", filename, exc)
 
     library_file = LibraryFile(
         folder_id=folder_id,
@@ -538,6 +548,29 @@ async def save_3mf_bytes_to_library(
     await db.commit()
     await db.refresh(library_file)
     return library_file, False
+
+
+async def save_3mf_bytes_to_library(
+    db: AsyncSession,
+    *,
+    file_bytes: bytes,
+    filename: str,
+    folder_id: int | None = None,
+    source_type: str | None = None,
+    source_url: str | None = None,
+    owner_id: int | None = None,
+) -> tuple[LibraryFile, bool]:
+    """Backwards-compatible wrapper for callers importing a 3MF blob."""
+
+    return await save_print_bytes_to_library(
+        db,
+        file_bytes=file_bytes,
+        filename=filename,
+        folder_id=folder_id,
+        source_type=source_type,
+        source_url=source_url,
+        owner_id=owner_id,
+    )
 
 
 def extract_gcode_thumbnail(file_path: Path) -> bytes | None:

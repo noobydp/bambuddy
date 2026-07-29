@@ -10,7 +10,7 @@ export default {
     projects: 'Projeler',
     inventory: 'Filament',
     files: 'Dosya Yöneticisi',
-    makerworld: 'MakerWorld',
+    makerworld: 'Modeller',
     notifications: 'Bildirimler',
     settings: 'Ayarlar',
     system: 'Sistem',
@@ -6472,10 +6472,10 @@ export default {
   },
 
   makerworld: {
-    title: 'MakerWorld',
-    description: 'Bambu Handy uygulamasına gitmeden — doğrudan Bambuddy\'den içe aktarmak ve yazdırmak için bir MakerWorld model URL\'si yapıştırın.',
-    pasteUrlHeader: "MakerWorld'den İçe Aktar",
-    pasteUrlPlaceholder: 'https://makerworld.com/en/models/… veya herhangi bir MakerWorld bağlantısını yapıştırın',
+    title: 'MakerWorld ve Printables Modelleri',
+    description: 'Yazdırılabilir dosyaları doğrudan Bambuddy\'ye aktarmak için bir MakerWorld veya Printables model URL\'si yapıştırın.',
+    pasteUrlHeader: "MakerWorld veya Printables'dan İçe Aktar",
+    pasteUrlPlaceholder: 'makerworld.com/models/… veya printables.com/model/… bağlantısı yapıştırın',
     resolveButton: 'Çöz',
     signInRequiredTitle: 'İndirme için Bambu Cloud girişi gerekli',
     signInRequiredBody: 'Model ayrıntılarına anonim olarak göz atabilirsiniz, ancak MakerWorld 3MF dosyalarını indirmek için bir Bambu Cloud hesabı gerektirir.',

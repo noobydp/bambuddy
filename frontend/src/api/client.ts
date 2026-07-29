@@ -1599,10 +1599,12 @@ export interface MakerworldStatus {
 }
 
 export interface MakerworldResolvedModel {
+  provider: 'makerworld' | 'printables';
   model_id: number;
   profile_id: number | null;
   design: Record<string, unknown>;
   instances: Array<Record<string, unknown>>;
+  source_url: string | null;
   already_imported_library_ids: number[];
 }
 
@@ -1615,6 +1617,7 @@ export interface MakerworldImportResponse {
 }
 
 export interface MakerworldRecentImport {
+  provider: 'makerworld' | 'printables';
   library_file_id: number;
   filename: string;
   folder_id: number | null;
@@ -5175,11 +5178,13 @@ export const api = {
     instance_id: number | null,
     profile_id?: number | null,
     folder_id?: number | null,
+    provider: 'makerworld' | 'printables' = 'makerworld',
   ) =>
     request<MakerworldImportResponse>('/makerworld/import', {
       method: 'POST',
       body: JSON.stringify({
         model_id,
+        provider,
         instance_id: instance_id ?? null,
         profile_id: profile_id ?? null,
         folder_id: folder_id ?? null,

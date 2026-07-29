@@ -28,27 +28,36 @@ function pickString(obj: Record<string, unknown> | undefined, key: string): stri
   return typeof value === 'string' ? value : '';
 }
 
-// Rewrite MakerWorld CDN URLs inside HTML content (design summary, etc.) to
-// use Bambuddy's thumbnail proxy. MakerWorld summaries are authored HTML and
-// commonly contain ``<img src="https://makerworld.bblmw.com/...">`` tags;
+// Rewrite supported provider CDN URLs inside HTML content to use Bambuddy's
+// thumbnail proxy. Model summaries are user-authored HTML and can contain
+// images from either MakerWorld or Printables;
 // Bambuddy's img-src CSP only allows ``'self' data: blob:``, so these would
 // otherwise be blocked. Pairs with ``proxyCdn`` below for explicit <img>
 // renders.
 function proxyCdnUrlsInHtml(html: string): string {
   return html.replace(
-    /(https?:\/\/(?:makerworld|public-cdn)\.bblmw\.com\/[^\s"']+)/gi,
+    /(https?:\/\/(?:(?:makerworld|public-cdn)\.bblmw\.com|(?:media|files)\.printables\.com)\/[^\s"']+)/gi,
     (match) => `/api/v1/makerworld/thumbnail?url=${encodeURIComponent(match)}`,
   );
 }
 
-// MakerWorld CDN images can't be hotlinked — Bambuddy's img-src CSP blocks
-// external hosts. Route them through the /makerworld/thumbnail proxy.
+// Provider CDN images can't be hotlinked because Bambuddy's img-src CSP
+// blocks external hosts. Route them through the shared thumbnail proxy.
 // Empty string in → empty string out so the ``{coverUrl && ...}`` checks
 // in the render keep short-circuiting.
 function proxyCdn(url: string): string {
   if (!url) return '';
-  if (!/^https?:\/\/(makerworld|public-cdn)\.bblmw\.com\//i.test(url)) return url;
+  if (
+    !/^https?:\/\/(?:(makerworld|public-cdn)\.bblmw\.com|(media|files)\.printables\.com)\//i.test(url)
+  ) return url;
   return `/api/v1/makerworld/thumbnail?url=${encodeURIComponent(url)}`;
+}
+
+function formatFileSize(bytes: number | null): string {
+  if (bytes === null || !Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 }
 function pickNumber(obj: Record<string, unknown> | undefined, key: string): number | null {
   const value = obj?.[key];
@@ -224,10 +233,16 @@ export function MakerworldPage() {
 
   const importMutation = useMutation({
     mutationFn: ({ instanceId, profileId }: { instanceId: number; profileId: number | null }) =>
-      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId),
+      api.importMakerworldInstance(
+        resolved?.model_id ?? 0,
+        instanceId,
+        profileId,
+        selectedFolderId,
+        resolved?.provider,
+      ),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['library-files'] });
-      // Backend auto-creates a "MakerWorld" folder on first import; refresh
+      // Backend auto-creates the provider's folder on first import; refresh
       // the folder tree so users see it without having to reload the page.
       queryClient.invalidateQueries({ queryKey: ['library-folders'] });
       // Track by profile_id so each plate's row can render its own inline
@@ -236,7 +251,18 @@ export function MakerworldPage() {
         setImportsByProfile((prev) => ({ ...prev, [data.profile_id!]: data }));
       }
       showToast(
-        data.was_existing ? t('makerworld.alreadyInLibrary') : t('makerworld.importSuccess', { filename: data.filename }),
+        resolved?.provider === 'printables'
+          ? data.was_existing
+            ? t('makerworld.printablesAlreadyInLibrary', {
+                defaultValue: 'This file is already in your library.',
+              })
+            : t('makerworld.printablesImportSuccess', {
+                filename: data.filename,
+                defaultValue: 'Imported {{filename}} — saved to File Manager → Printables',
+              })
+          : data.was_existing
+            ? t('makerworld.alreadyInLibrary')
+            : t('makerworld.importSuccess', { filename: data.filename }),
         'success',
       );
     },
@@ -278,7 +304,13 @@ export function MakerworldPage() {
   // own "Download and Open" button behaviour.
   const sliceMutation = useMutation({
     mutationFn: ({ instanceId, profileId }: { instanceId: number; profileId: number | null }) =>
-      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId),
+      api.importMakerworldInstance(
+        resolved?.model_id ?? 0,
+        instanceId,
+        profileId,
+        selectedFolderId,
+        resolved?.provider,
+      ),
     onSuccess: async (data: MakerworldImportResponse) => {
       queryClient.invalidateQueries({ queryKey: ['library-files'] });
       queryClient.invalidateQueries({ queryKey: ['library-folders'] });
@@ -398,13 +430,15 @@ export function MakerworldPage() {
   };
 
   const design = resolved?.design;
+  const provider = resolved?.provider ?? null;
+  const isPrintables = provider === 'printables';
   const creator = pickObject(design, 'designCreator');
   const instances = resolved?.instances ?? [];
   const alreadyImported = (resolved?.already_imported_library_ids.length ?? 0) > 0;
 
   // Only block Print Now / Import actions on an import-capable login.
   // Browse/resolve works anonymously.
-  const canDownload = statusQuery.data?.can_download ?? false;
+  const canDownload = isPrintables || (statusQuery.data?.can_download ?? false);
   // A stored token Bambu has rejected downloads nothing, but it isn't "no
   // token" either — saying "sign in" to someone who believes they already are
   // is what made this so confusing. Name the actual state.
@@ -433,7 +467,7 @@ export function MakerworldPage() {
           screens (tablet/phone), with the sidebar tucked below the main flow. */}
       <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
         <div className="space-y-6 min-w-0">
-      {!canDownload && (
+      {provider === 'makerworld' && !canDownload && (
         <Card className="border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20">
           <CardContent>
             <div className="flex items-start gap-3 py-2">
@@ -532,14 +566,17 @@ export function MakerworldPage() {
                     }}
                   />
                 )}
-                {resolved && (
+                {resolved.source_url && (
                   <a
-                    href={`https://makerworld.com/models/${resolved.model_id}${resolved.profile_id ? `#profileId-${resolved.profile_id}` : ''}`}
+                    href={resolved.source_url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="mt-3 inline-flex items-center gap-1 text-xs text-brand-500 hover:underline"
                   >
-                    <ExternalLink className="w-3 h-3" /> {t('makerworld.openOnMakerworld')}
+                    <ExternalLink className="w-3 h-3" />{' '}
+                    {isPrintables
+                      ? t('makerworld.openOnPrintables', { defaultValue: 'Open on Printables' })
+                      : t('makerworld.openOnMakerworld')}
                   </a>
                 )}
               </div>
@@ -552,7 +589,14 @@ export function MakerworldPage() {
         <Card>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">{t('makerworld.platesHeader', { count: instances.length })}</h2>
+              <h2 className="text-lg font-semibold">
+                {isPrintables
+                  ? t('makerworld.filesHeader', {
+                      count: instances.length,
+                      defaultValue: 'Model files ({{count}})',
+                    })
+                  : t('makerworld.platesHeader', { count: instances.length })}
+              </h2>
               <div className="flex flex-wrap items-center gap-2">
                 <label className="text-xs text-gray-600 dark:text-gray-400">
                   {t('makerworld.importTo')}
@@ -563,7 +607,11 @@ export function MakerworldPage() {
                   className="text-sm px-2 py-1 border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700"
                   disabled={bulkProgress !== null}
                 >
-                  <option value="">{t('makerworld.folderAuto')}</option>
+                  <option value="">
+                    {isPrintables
+                      ? t('makerworld.folderPrintables', { defaultValue: 'Printables (default)' })
+                      : t('makerworld.folderAuto')}
+                  </option>
                   {(foldersQuery.data ?? [])
                     .filter((f) => !(f.is_external && f.external_readonly))
                     .flatMap((f) => flattenFolderTree(f))
@@ -610,6 +658,8 @@ export function MakerworldPage() {
                 const profileId = pickNumber(inst, 'profileId');
                 const instanceTitle = pickString(inst, 'title');
                 const cover = pickString(inst, 'cover');
+                const fileSize = pickNumber(inst, 'fileSize');
+                const fileExtension = pickString(inst, 'fileExtension');
                 const materialCnt = pickNumber(inst, 'materialCnt');
                 const needAms = inst?.['needAms'] === true;
                 const downloadsOnInstance = pickNumber(inst, 'downloadCount');
@@ -668,9 +718,17 @@ export function MakerworldPage() {
                       })()}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">
-                          {instanceTitle || t('makerworld.plateDefaultName', { n: idx + 1 })}
+                          {instanceTitle ||
+                            (isPrintables
+                              ? t('makerworld.fileDefaultName', {
+                                  n: idx + 1,
+                                  defaultValue: 'Model file {{n}}',
+                                })
+                              : t('makerworld.plateDefaultName', { n: idx + 1 }))}
                         </p>
                         <div className="flex flex-wrap gap-3 text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          {fileExtension && <span>{fileExtension}</span>}
+                          {fileSize !== null && <span>{formatFileSize(fileSize)}</span>}
                           {primaryPrinter && (
                             <span className="font-medium text-gray-700 dark:text-gray-300">
                               {t('makerworld.slicedFor', { printer: primaryPrinter, defaultValue: 'Sliced for {{printer}}' })}
@@ -907,7 +965,11 @@ export function MakerworldPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center justify-center h-7 w-7 rounded text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                              title={t('makerworld.openOnMakerworld')}
+                              title={
+                                item.provider === 'printables'
+                                  ? t('makerworld.openOnPrintables', { defaultValue: 'Open on Printables' })
+                                  : t('makerworld.openOnMakerworld')
+                              }
                             >
                               <Globe className="w-3.5 h-3.5" />
                             </a>
@@ -930,7 +992,15 @@ export function MakerworldPage() {
       {pendingDelete && (
         <ConfirmModal
           title={t('makerworld.deleteImport')}
-          message={t('makerworld.confirmDelete', { filename: pendingDelete.filename })}
+          message={
+            isPrintables
+              ? t('makerworld.confirmDeletePrintables', {
+                  filename: pendingDelete.filename,
+                  defaultValue:
+                    'Remove {{filename}} from the library? This deletes the local file, but it can be imported from Printables again.',
+                })
+              : t('makerworld.confirmDelete', { filename: pendingDelete.filename })
+          }
           confirmText={t('makerworld.deleteImport')}
           variant="danger"
           isLoading={deleteImportMutation.isPending}

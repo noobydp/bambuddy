@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
 class MakerWorldResolveRequest(BaseModel):
-    """Body for POST /makerworld/resolve."""
+    """Body for resolving a MakerWorld or Printables model URL."""
 
-    url: str = Field(..., description="Any MakerWorld model URL (scheme optional)")
+    url: str = Field(..., description="Any MakerWorld or Printables model URL (scheme optional)")
 
 
 class MakerWorldResolvedModel(BaseModel):
@@ -22,6 +22,7 @@ class MakerWorldResolvedModel(BaseModel):
     them as opaque dicts avoids brittle coupling.
     """
 
+    provider: Literal["makerworld", "printables"] = "makerworld"
     model_id: int
     profile_id: int | None = Field(
         default=None,
@@ -29,6 +30,10 @@ class MakerWorldResolvedModel(BaseModel):
     )
     design: dict[str, Any]
     instances: list[dict[str, Any]]
+    source_url: str | None = Field(
+        default=None,
+        description="Canonical model URL on the resolved provider.",
+    )
     already_imported_library_ids: list[int] = Field(
         default_factory=list,
         description="LibraryFile IDs that were previously imported from this model URL",
@@ -38,9 +43,13 @@ class MakerWorldResolvedModel(BaseModel):
 class MakerWorldImportRequest(BaseModel):
     """Body for POST /makerworld/import."""
 
+    provider: Literal["makerworld", "printables"] = Field(
+        default="makerworld",
+        description="Source provider returned by the resolve endpoint.",
+    )
     model_id: int = Field(
         ...,
-        description="The MakerWorld design ID (the number in /models/{id}).",
+        description="Provider model ID.",
     )
     profile_id: int | None = Field(
         default=None,
@@ -53,7 +62,7 @@ class MakerWorldImportRequest(BaseModel):
     )
     instance_id: int | None = Field(
         default=None,
-        description="Retained for backwards compatibility; no longer used by the download flow.",
+        description="MakerWorld instance ID or Printables model-file ID.",
     )
     folder_id: int | None = Field(default=None, description="Target library folder; null = root")
 
@@ -61,6 +70,7 @@ class MakerWorldImportRequest(BaseModel):
 class MakerWorldRecentImport(BaseModel):
     """One row in the 'recent MakerWorld imports' list."""
 
+    provider: Literal["makerworld", "printables"] = "makerworld"
     library_file_id: int
     filename: str
     folder_id: int | None
@@ -71,9 +81,7 @@ class MakerWorldRecentImport(BaseModel):
     )
     source_url: str | None = Field(
         default=None,
-        description="Canonical MakerWorld URL (``https://makerworld.com/models/{id}"
-        "#profileId-{pid}``). The frontend uses it to build an 'Open on MakerWorld' "
-        "link and to extract model/profile ids without a second API round-trip.",
+        description="Canonical provider URL used for the external model link.",
     )
     created_at: str
 

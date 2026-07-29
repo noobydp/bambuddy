@@ -10,7 +10,7 @@ listing endpoint.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -550,6 +550,129 @@ class TestImport:
         assert (ext_dir / "benchy.3mf").read_bytes() == b"pre-existing"
 
 
+class TestPrintablesRoutes:
+    """Printables reuses the model-import routes without Bambu Cloud auth."""
+
+    _MODEL = {
+        "id": "180860",
+        "name": "Cartridge holders",
+        "slug": "cartridge-holders",
+        "description": "<p>Useful holders</p>",
+        "downloadCount": 217,
+        "license": {"name": "GPL v2"},
+        "user": {"publicUsername": "PaSe"},
+        "image": {"filePath": "media/prints/180860/images/cover.jpg"},
+        "images": [],
+        "stls": [
+            {
+                "id": "764187",
+                "name": "SiliconeCartridgeHolder5.stl",
+                "fileSize": 297884,
+                "folder": "",
+            }
+        ],
+    }
+
+    @pytest.mark.asyncio
+    async def test_resolve_normalizes_public_model_and_files(self, async_client):
+        service = AsyncMock()
+        service.get_model.return_value = self._MODEL
+        service.close = AsyncMock()
+
+        with patch("backend.app.api.routes.makerworld.PrintablesService") as service_cls:
+            service_cls.parse_url.return_value = 180860
+            service_cls.return_value = service
+            # Preserve the real pure normalization helpers while the network
+            # boundary itself remains mocked.
+            from backend.app.services.printables import PrintablesService
+
+            service_cls.normalize_design.side_effect = PrintablesService.normalize_design
+            service_cls.list_supported_files.side_effect = PrintablesService.list_supported_files
+            service_cls.canonical_url.side_effect = PrintablesService.canonical_url
+            resp = await async_client.post(
+                "/api/v1/makerworld/resolve",
+                json={"url": ("https://www.printables.com/model/180860-cartridge-holders")},
+            )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["provider"] == "printables"
+        assert body["model_id"] == 180860
+        assert body["source_url"] == ("https://www.printables.com/model/180860-cartridge-holders")
+        assert body["design"]["title"] == "Cartridge holders"
+        assert body["instances"][0]["title"] == "SiliconeCartridgeHolder5.stl"
+        assert body["instances"][0]["fileExtension"] == "STL"
+
+    @pytest.mark.asyncio
+    async def test_import_downloads_selected_file_without_cloud_login(self, async_client, db_session):
+        service = AsyncMock()
+        service.get_model.return_value = self._MODEL
+        service.list_supported_files = MagicMock(
+            return_value=[
+                {
+                    "id": 764187,
+                    "profileId": 764187,
+                    "title": "SiliconeCartridgeHolder5.stl",
+                }
+            ]
+        )
+        service.canonical_file_url = MagicMock(return_value="https://www.printables.com/model/180860#file-764187")
+        service.get_download_link.return_value = "https://files.printables.com/media/model.stl"
+        # Below the STL-thumbnail minimum so the route needn't render a mesh
+        # in this focused import test.
+        service.download_model_file.return_value = b"solid holder\nendsolid holder\n"
+        service.close = AsyncMock()
+
+        with patch(
+            "backend.app.api.routes.makerworld.PrintablesService",
+            return_value=service,
+        ):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={
+                    "provider": "printables",
+                    "model_id": 180860,
+                    "instance_id": 764187,
+                    "profile_id": 764187,
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["filename"] == "SiliconeCartridgeHolder5.stl"
+        assert body["profile_id"] == 764187
+        assert body["was_existing"] is False
+
+        from sqlalchemy import select
+
+        row = (
+            await db_session.execute(select(LibraryFile).where(LibraryFile.id == body["library_file_id"]))
+        ).scalar_one()
+        assert row.file_type == "stl"
+        assert row.source_type == "printables"
+        assert row.source_url == ("https://www.printables.com/model/180860#file-764187")
+        folder = (await db_session.execute(select(LibraryFolder).where(LibraryFolder.id == row.folder_id))).scalar_one()
+        assert folder.name == "Printables"
+
+    @pytest.mark.asyncio
+    async def test_recent_imports_include_printables_provider(self, async_client, db_session):
+        db_session.add(
+            LibraryFile(
+                filename="holder.stl",
+                file_path="library/holder.stl",
+                file_type="stl",
+                file_size=10,
+                source_type="printables",
+                source_url=("https://www.printables.com/model/180860#file-764187"),
+            )
+        )
+        await db_session.commit()
+
+        resp = await async_client.get("/api/v1/makerworld/recent-imports")
+        assert resp.status_code == 200
+        assert resp.json()[0]["provider"] == "printables"
+
+
 class TestRecentImports:
     """GET /makerworld/recent-imports — sidebar feed on the MakerWorld page."""
 
@@ -629,6 +752,7 @@ class TestRecentImports:
         assert resp.status_code == 200, resp.text
         item = resp.json()[0]
         assert set(item.keys()) == {
+            "provider",
             "library_file_id",
             "filename",
             "folder_id",
@@ -636,6 +760,7 @@ class TestRecentImports:
             "source_url",
             "created_at",
         }
+        assert item["provider"] == "makerworld"
         assert item["source_url"] == "https://makerworld.com/models/1#profileId-2"
 
     @pytest.mark.asyncio
