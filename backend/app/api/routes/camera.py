@@ -1055,7 +1055,6 @@ async def camera_stream(
 
     # Check for external camera first
     if printer.external_camera_enabled and printer.external_camera_url:
-        import time
         import uuid
 
         from backend.app.services.external_camera import generate_mjpeg_stream
@@ -1152,8 +1151,6 @@ async def camera_stream(
     # attached — otherwise /camera/status would report stream_uptime jumping
     # backward whenever a second viewer joins. The upstream generator's
     # finally clears this entry when the upstream actually ends.
-    import time
-
     _stream_start_times.setdefault(printer_id, time.time())
 
     # Fan-out broadcaster (#1089): one upstream connection per printer, shared

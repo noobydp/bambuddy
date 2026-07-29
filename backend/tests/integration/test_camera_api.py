@@ -7,6 +7,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.responses import Response
 from httpx import AsyncClient
 
 
@@ -481,6 +482,64 @@ class TestCameraAPI:
             )
             # Response will be a streaming response with error
             assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_klipper_camera_stream_route_reaches_shared_fanout(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+    ):
+        """Provider branches must not be broken by function-local imports below them."""
+        printer = await printer_factory(
+            provider="klipper",
+            model="Klipper",
+            connection_port=7125,
+            access_code="",
+        )
+        webcam = {
+            "service": "mjpegstreamer-adaptive",
+            "stream_url": "/webcam/stream",
+            "snapshot_url": "/webcam/snapshot",
+        }
+
+        with (
+            patch(
+                "backend.app.api.routes.camera._moonraker_webcam",
+                new=AsyncMock(return_value=webcam),
+            ),
+            patch(
+                "backend.app.api.routes.camera._fanout_stream_response",
+                new=AsyncMock(return_value=Response(content=b"stream-ready")),
+            ) as fanout,
+        ):
+            response = await async_client.get(f"/api/v1/printers/{printer.id}/camera/stream")
+
+        assert response.status_code == 200
+        assert response.content == b"stream-ready"
+        fanout.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_flashforge_camera_stream_route_reaches_shared_fanout(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+    ):
+        printer = await printer_factory(
+            provider="flashforge",
+            model="FlashForge Creator 5 Pro",
+        )
+
+        with patch(
+            "backend.app.api.routes.camera._fanout_stream_response",
+            new=AsyncMock(return_value=Response(content=b"stream-ready")),
+        ) as fanout:
+            response = await async_client.get(f"/api/v1/printers/{printer.id}/camera/stream")
+
+        assert response.status_code == 200
+        assert response.content == b"stream-ready"
+        fanout.assert_awaited_once()
 
     @pytest.mark.asyncio
     @pytest.mark.integration
