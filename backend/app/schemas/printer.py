@@ -434,6 +434,7 @@ class PrinterDeviceInfo(BaseModel):
     klipper_version: str | None = None
     kinematics: str | None = None
     mcu_count: int | None = None
+    toolchanger_ready: bool | None = None
 
 
 class PrinterStatus(BaseModel):

@@ -24,6 +24,7 @@ def _client_from_fixture(name: str, **kwargs: Any) -> MoonrakerClient:
     client._printer_info = fixture["printer_info"]
     client._objects = set(fixture["objects"])
     client._webcams = fixture["webcams"]
+    client._disk_usage = fixture.get("disk_usage", {})
     client._apply_status(fixture["status"])
     return client
 
@@ -39,7 +40,9 @@ def test_tinyt_maps_tools_sensors_motion_and_capabilities() -> None:
     assert snapshot["motion"]["homed_axes"] == ["x", "y", "z"]
     assert snapshot["motion"]["leveling_method"] == "z_tilt"
     assert snapshot["device_info"]["build_volume"] == "169.2 × 172.5 × 125 mm"
+    assert snapshot["device_info"]["remaining_disk_gb"] == 10.8
     assert snapshot["device_info"]["mcu_count"] == 3
+    assert snapshot["device_info"]["toolchanger_ready"] is True
     assert {sensor["label"] for sensor in snapshot["sensors"]} >= {
         "Toolhead T0",
         "Toolhead T1",
@@ -59,6 +62,31 @@ def test_trident_maps_qgl_single_tool_and_unhomed_state() -> None:
     assert snapshot["motion"]["speed_factor_percent"] == 90
     assert snapshot["motion"]["flow_factor_percent"] == 105
     assert snapshot["device_info"]["build_volume"] == "424 × 416 × 360 mm"
+    assert snapshot["device_info"]["remaining_disk_gb"] == 9.5
+    assert snapshot["device_info"]["toolchanger_ready"] is None
+
+
+def test_storage_info_uses_moonraker_directory_disk_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client_from_fixture("tinyt")
+    requests: list[tuple[str, dict[str, Any] | None]] = []
+
+    def fake_get(path: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        requests.append((path, params))
+        return {
+            "disk_usage": {
+                "total": 30_000,
+                "used": 18_000,
+                "free": 12_000,
+            }
+        }
+
+    monkeypatch.setattr(client, "_http_get", fake_get)
+
+    assert client.get_storage_info() == {
+        "used_bytes": 18_000,
+        "free_bytes": 12_000,
+    }
+    assert requests == [("/server/files/directory", {"path": "gcodes"})]
 
 
 def test_partial_websocket_updates_merge_and_emit_print_transitions() -> None:

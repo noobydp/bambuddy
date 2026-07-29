@@ -1394,7 +1394,10 @@ describe('Klipper printer controls', () => {
         ],
         heaters: [],
         fans: [{ id: 'fan', label: 'Part fan', speed_percent: 0, active: false, controllable: true }],
-        sensors: [{ id: 'filament', label: 'T0 filament', kind: 'filament', value: true, triggered: true }],
+        sensors: [
+          { id: 'filament-t0', label: 'T0 filament', kind: 'filament', value: true, triggered: true },
+          { id: 'filament-t1', label: 'T1 filament', kind: 'filament', value: false, triggered: false },
+        ],
         motion: {
           position: { x: 10, y: 20, z: 30 },
           homed_axes: ['x', 'y'],
@@ -1403,7 +1406,15 @@ describe('Klipper printer controls', () => {
           kinematics: 'corexy',
           leveling_method: 'z_tilt',
         },
-        device_info: { vendor: 'Klipper', model: 'Klipper', klipper_version: 'v0.13' },
+        device_info: {
+          vendor: 'Klipper',
+          model: 'Klipper',
+          build_volume: '169.2 × 172.5 × 125 mm',
+          remaining_disk_gb: 10.8,
+          kinematics: 'corexy',
+          klipper_version: 'v0.13.0-689-g2fb3d54e',
+          toolchanger_ready: true,
+        },
         capabilities: {
           can_pause: true,
           can_resume: true,
@@ -1438,6 +1449,15 @@ describe('Klipper printer controls', () => {
 
     render(<PrintersPage />);
     await screen.findByText('TinyT');
+    expect(await screen.findByText('Klipper / Moonraker')).toBeInTheDocument();
+    expect(screen.getByText('169.2 × 172.5 × 125 mm')).toBeInTheDocument();
+    expect(screen.getByText('10.8 GB free')).toBeInTheDocument();
+    expect(screen.getByText('CoreXY')).toBeInTheDocument();
+    expect(screen.getByText('Klipper v0.13.0+689')).toBeInTheDocument();
+    expect(screen.getByText('Tools 2 · Ready')).toBeInTheDocument();
+    expect(screen.getByText('Filament 1/2')).toBeInTheDocument();
+    expect(screen.getByText('Z Tilt')).toBeInTheDocument();
+    expect(screen.getByText('Homed XY')).toBeInTheDocument();
     await user.click(await screen.findByTitle(/more/i));
     await user.click(screen.getByRole('button', { name: 'Klipper controls' }));
 

@@ -110,18 +110,7 @@ async def upload_printer_file(
 
 async def get_printer_storage(printer: Printer) -> dict[str, int | None]:
     if provider_for_printer(printer) == PROVIDER_KLIPPER:
-        client = _moonraker_client(printer)
-        result = await asyncio.to_thread(client._http_get, "/server/files/roots")
-        roots = result if isinstance(result, list) else (result or {}).get("roots") or []
-        root = next((item for item in roots if item.get("name") == "gcodes"), None)
-        if not root:
-            return {"used_bytes": None, "free_bytes": None}
-        total = root.get("total_space")
-        free = root.get("free_space")
-        return {
-            "used_bytes": total - free if isinstance(total, int) and isinstance(free, int) else None,
-            "free_bytes": free if isinstance(free, int) else None,
-        }
+        return await asyncio.to_thread(_moonraker_client(printer).get_storage_info)
     return await get_storage_info_async(
         printer.ip_address,
         printer.access_code,

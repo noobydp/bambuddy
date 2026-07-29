@@ -243,6 +243,7 @@ class MoonrakerClient:
         self._server_info: dict[str, Any] = {}
         self._printer_info: dict[str, Any] = {}
         self._webcams: list[dict[str, Any]] = []
+        self._disk_usage: dict[str, Any] = {}
         self._last_update = 0.0
         self._previous_state = "unknown"
         self._stop_event = threading.Event()
@@ -336,6 +337,11 @@ class MoonrakerClient:
             self._webcams = list((webcam_info or {}).get("webcams") or [])
         except Exception:
             self._webcams = []
+        try:
+            directory_info = await self._get_json(session, "/server/files/directory?path=gcodes")
+            self._disk_usage = dict((directory_info or {}).get("disk_usage") or {})
+        except Exception:
+            self._disk_usage = {}
 
     async def _poll_status_http(self, session: aiohttp.ClientSession) -> None:
         payload = {
@@ -644,6 +650,12 @@ class MoonrakerClient:
             z = _float((config.get("stepper_z") or {}).get("position_max"))
             if x and y and z:
                 build_volume = f"{x:g} × {y:g} × {z:g} mm"
+        free_storage = self._disk_usage.get("free")
+        remaining_disk_gb = (
+            round(free_storage / (1024**3), 1)
+            if isinstance(free_storage, (int, float)) and free_storage >= 0
+            else None
+        )
 
         self.state.temperatures = temperatures
         self.state.firmware_version = self._printer_info.get("software_version")
@@ -675,11 +687,13 @@ class MoonrakerClient:
                     "model": self.model,
                     "build_volume": build_volume,
                     "firmware_version": self._printer_info.get("software_version"),
+                    "remaining_disk_gb": remaining_disk_gb,
                     "hostname": self._server_info.get("hostname") or self._printer_info.get("hostname"),
                     "moonraker_version": self._server_info.get("moonraker_version"),
                     "klipper_version": self._printer_info.get("software_version"),
                     "kinematics": kinematics,
                     "mcu_count": sum(1 for name in self._objects if name == "mcu" or name.startswith("mcu ")),
+                    "toolchanger_ready": self._toolchanger_ready() if tool_objects else None,
                 },
             },
         }
@@ -902,6 +916,22 @@ class MoonrakerClient:
 
     def get_webcams(self) -> list[dict[str, Any]]:
         return list(self._webcams)
+
+    def get_storage_info(self) -> dict[str, int | None]:
+        result = self._http_get(
+            "/server/files/directory",
+            params={"path": "gcodes"},
+        )
+        disk_usage = (result or {}).get("disk_usage") if isinstance(result, dict) else None
+        if not isinstance(disk_usage, dict):
+            return {"used_bytes": None, "free_bytes": None}
+        self._disk_usage = dict(disk_usage)
+        used = disk_usage.get("used")
+        free = disk_usage.get("free")
+        return {
+            "used_bytes": int(used) if isinstance(used, (int, float)) else None,
+            "free_bytes": int(free) if isinstance(free, (int, float)) else None,
+        }
 
     def list_files(self, path: str = "") -> list[dict[str, Any]]:
         directory = _safe_gcode_path(path)

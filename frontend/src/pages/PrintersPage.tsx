@@ -140,6 +140,31 @@ function formatKValue(k: number | null | undefined): string {
   return value.toFixed(3);
 }
 
+function formatKlipperBuildVolume(value: string): string {
+  const normalized = value.replaceAll('X', ' × ');
+  return /\bmm$/i.test(normalized) ? normalized : `${normalized} mm`;
+}
+
+function formatKlipperVersion(value: string): string {
+  const match = value.match(/^v?(\d+\.\d+(?:\.\d+)?)(?:-(\d+))?/i);
+  if (!match) return value;
+  return `v${match[1]}${match[2] ? `+${match[2]}` : ''}`;
+}
+
+function formatKlipperKinematics(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'corexy') return 'CoreXY';
+  if (normalized === 'corexz') return 'CoreXZ';
+  if (normalized === 'limited_corexy') return 'Limited CoreXY';
+  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : value;
+}
+
+function formatKlipperLeveling(value: string): string {
+  if (value === 'quad_gantry_level') return 'Quad Gantry Level';
+  if (value === 'z_tilt') return 'Z Tilt';
+  return value.replaceAll('_', ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
 // Nozzle side indicators (Bambu Lab style - square badge with L/R)
 function NozzleBadge({ side }: { side: 'L' | 'R' }) {
   const { mode } = useTheme();
@@ -4242,6 +4267,95 @@ function PrinterCard({
                 </div>
               </div>
             )}
+
+            {viewMode === 'expanded' && fallbackProvider === 'klipper' && status.device_info && (() => {
+              const klipperTools = status.tools ?? [];
+              const filamentSensors = (status.sensors ?? []).filter(sensor => sensor.kind === 'filament');
+              const detectedFilamentSensors = filamentSensors.filter(
+                sensor => sensor.value === true || sensor.triggered === true
+              ).length;
+              const kinematics = status.motion?.kinematics ?? status.device_info.kinematics;
+              const levelingMethod = status.motion?.leveling_method;
+              const klipperVersion = status.device_info.klipper_version;
+              const homedAxes = status.motion?.homed_axes ?? [];
+              const orderedHomedAxes = ['x', 'y', 'z', 'e'].filter(axis => homedAxes.includes(axis));
+
+              return (
+                <div className="mt-2 rounded-lg bg-bambu-dark p-2">
+                  <div className="mb-1.5 flex items-center gap-2">
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-bambu-gray">
+                      {t('printers.klipper.deviceStatus', 'Klipper / Moonraker')}
+                    </span>
+                    <div className="h-[2px] flex-1 bg-bambu-dark-tertiary" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] sm:grid-cols-4">
+                    {status.device_info.build_volume && (
+                      <span className="flex items-center gap-1 text-bambu-gray">
+                        <Box className="h-3 w-3" />
+                        <span className="text-white">
+                          {formatKlipperBuildVolume(status.device_info.build_volume)}
+                        </span>
+                      </span>
+                    )}
+                    {status.device_info.remaining_disk_gb != null && (
+                      <span className="flex items-center gap-1 text-bambu-gray">
+                        <HardDrive className="h-3 w-3" />
+                        <span className="text-white">{status.device_info.remaining_disk_gb.toFixed(1)} GB free</span>
+                      </span>
+                    )}
+                    {kinematics && (
+                      <span className="flex items-center gap-1 text-bambu-gray">
+                        <Move className="h-3 w-3" />
+                        <span className="text-white">{formatKlipperKinematics(kinematics)}</span>
+                      </span>
+                    )}
+                    {klipperVersion && (
+                      <span className="flex items-center gap-1 text-bambu-gray">
+                        <Terminal className="h-3 w-3" />
+                        <span className="text-white">Klipper {formatKlipperVersion(klipperVersion)}</span>
+                      </span>
+                    )}
+                    {klipperTools.length > 0 && (
+                      <span className="flex items-center gap-1 text-bambu-gray">
+                        <Wrench className="h-3 w-3" />
+                        <span className="text-white">
+                          {t('printers.klipper.tools', 'Tools')} {klipperTools.length}
+                          {status.device_info.toolchanger_ready != null && (
+                            <> · {status.device_info.toolchanger_ready
+                              ? t('printers.klipper.toolchangerReady', 'Ready')
+                              : t('printers.klipper.toolchangerNotReady', 'Not ready')}</>
+                          )}
+                        </span>
+                      </span>
+                    )}
+                    {filamentSensors.length > 0 && (
+                      <span className="flex items-center gap-1 text-bambu-gray">
+                        <Cable className="h-3 w-3" />
+                        <span className="text-white">
+                          {t('printers.klipper.filament', 'Filament')} {detectedFilamentSensors}/{filamentSensors.length}
+                        </span>
+                      </span>
+                    )}
+                    {levelingMethod && (
+                      <span className="flex items-center gap-1 text-bambu-gray">
+                        <Layers className="h-3 w-3" />
+                        <span className="text-white">{formatKlipperLeveling(levelingMethod)}</span>
+                      </span>
+                    )}
+                    {status.motion && (
+                      <span className="flex items-center gap-1 text-bambu-gray">
+                        <Home className="h-3 w-3" />
+                        <span className="text-white">
+                          {orderedHomedAxes.length > 0
+                            ? `${t('printers.klipper.homed', 'Homed')} ${orderedHomedAxes.join('').toUpperCase()}`
+                            : t('printers.klipper.notHomed', 'Not homed')}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {viewMode === 'expanded' && showClearPlateButton && (
               <button

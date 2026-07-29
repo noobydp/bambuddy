@@ -720,6 +720,7 @@ export interface PrinterDeviceInfo {
   klipper_version?: string | null;
   kinematics?: string | null;
   mcu_count?: number | null;
+  toolchanger_ready?: boolean | null;
 }
 
 export interface PrinterCreate {

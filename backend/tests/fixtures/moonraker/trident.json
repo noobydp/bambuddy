@@ -37,6 +37,11 @@
       "stream_url": "/webcam/stream"
     }
   ],
+  "disk_usage": {
+    "total": 30818349056,
+    "used": 19024510976,
+    "free": 10208612352
+  },
   "status": {
     "print_stats": {
       "state": "standby",
