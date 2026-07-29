@@ -1,9 +1,9 @@
-name: Publish FlashForge Docker image
+name: Publish fork Docker image
 
 on:
   push:
     branches:
-      - flashforge-creator5pro
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: publish-flashforge-image
+  group: publish-fork-image
   cancel-in-progress: true
 
 jobs:
@@ -41,10 +41,13 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/noobydp/bambuddy:flashforge-creator5pro
+          tags: |
+            ghcr.io/noobydp/bambuddy:latest
+            ghcr.io/noobydp/bambuddy:klipper-moonraker
+            ghcr.io/noobydp/bambuddy:flashforge-creator5pro
           labels: |
             org.opencontainers.image.source=https://github.com/noobydp/bambuddy
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.description=Bambuddy with FlashForge Creator 5 Pro LAN support
-          cache-from: type=gha,scope=flashforge-image
-          cache-to: type=gha,scope=flashforge-image,mode=max
+            org.opencontainers.image.description=Bambuddy fork with FlashForge, Klipper, and Printables support
+          cache-from: type=gha,scope=fork-image
+          cache-to: type=gha,scope=fork-image,mode=max
