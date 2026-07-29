@@ -2,7 +2,7 @@
   <img src="static/img/bambuddy_logo_dark.png" alt="Bambuddy Logo" width="300">
 </p>
 
-<h1 align="center">Bambuddy</h1>
+<h1 align="center">Bambuddy - Flashforge and Klipper Fork</h1>
 
 <p align="center">
   <strong>Your printers. No cloud. Your rules.</strong><br>
@@ -74,6 +74,10 @@ Two leading 3D-printing publications independently concluded that Bambuddy's fea
 📄 **[See all press coverage →](https://bambuddy.cool/press.html)**
 
 ---
+## 🌐 NEW: Flashforge Creator 5 and Klipper support
+<p align="center">
+  <img width="800" alt="Updated dashboard" src="https://github.com/user-attachments/assets/bbe8efd8-b9c2-4944-8bbf-a4ae75c48796" />
+</p>
 
 ## 🌐 NEW: Remote Printing with Proxy Mode
 
