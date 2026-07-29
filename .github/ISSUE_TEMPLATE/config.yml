@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: About this fork
+    url: https://github.com/noobydp/bambuddy/blob/main/FORK.md
+    about: Provider scope, confirmed printers, upstream relationship, and where to report fork-specific problems.
   - name: Printer won't connect or won't print?
     url: https://wiki.bambuddy.cool/reference/troubleshooting/
     about: Most connection and printing problems are setup issues. Check the troubleshooting guide and run the in-app Connection Diagnostic (printer card or System page) before opening an issue.

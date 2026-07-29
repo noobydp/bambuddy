@@ -1,31 +1,38 @@
-# Bambuddy
+# Bambuddy — FlashForge and Klipper fork
 
-**Self-hosted print archive and management system for Bambu Lab 3D printers.**
+**Maintained fork of
+[`maziggy/bambuddy`](https://github.com/maziggy/bambuddy), extending the
+self-hosted print archive and management system to FlashForge LAN and
+Klipper/Moonraker printers.**
 
 No cloud dependency. Complete privacy. Full control.
 
-[![GitHub](https://img.shields.io/github/stars/maziggy/bambuddy?style=flat-square&label=GitHub)](https://github.com/maziggy/bambuddy)
-[![License](https://img.shields.io/github/license/maziggy/bambuddy?style=flat-square)](https://github.com/maziggy/bambuddy/blob/main/LICENSE)
+[![GitHub](https://img.shields.io/github/stars/noobydp/bambuddy?style=flat-square&label=Fork)](https://github.com/noobydp/bambuddy)
+[![License](https://img.shields.io/github/license/noobydp/bambuddy?style=flat-square)](https://github.com/noobydp/bambuddy/blob/main/LICENSE)
 [![Discord](https://img.shields.io/discord/1461241694715645994?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/aFS3ZfScHM)
+
+This is an independent fork. The Discord server, website, and wiki belong to
+the upstream Bambuddy project.
 
 ## Quick Start
 
 ```bash
 mkdir bambuddy && cd bambuddy
-curl -O https://raw.githubusercontent.com/maziggy/bambuddy/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/noobydp/bambuddy/main/docker-compose.yml
 docker compose up -d
 ```
 
 Open **http://localhost:8000** and add your printer.
 
-> **Requirements:** Bambu Lab printer with Developer Mode enabled, on the same local network.
+> **Requirements:** A supported Bambu Lab, FlashForge LAN, or
+> Klipper/Moonraker printer reachable from the Bambuddy host.
 
 ## Supported Architectures
 
 | Architecture | Tag |
 |---|---|
 | x86-64 (Intel/AMD) | `amd64` |
-| arm64 (Raspberry Pi 4/5) | `arm64` |
+| arm64 (Raspberry Pi 4/5) | Build from source; no pre-built fork image yet |
 
 ## Features
 
@@ -63,7 +70,7 @@ Open **http://localhost:8000** and add your printer.
 ```yaml
 services:
   bambuddy:
-    image: maziggy/bambuddy:latest
+    image: ghcr.io/noobydp/bambuddy:latest
     container_name: bambuddy
     network_mode: host
     environment:
@@ -88,39 +95,35 @@ volumes:
 docker compose pull && docker compose up -d
 ```
 
-## Daily Beta Builds
+## Fork Tags
 
-Beta builds with the latest fixes are pushed regularly to the same beta version tag:
+The combined build is published from `main`:
 
 ```bash
-# Pull the current beta
-docker pull maziggy/bambuddy:0.2.2b1
+docker pull ghcr.io/noobydp/bambuddy:latest
 ```
 
-Use [Watchtower](https://containrrr.dev/watchtower/) to automatically update when new daily builds are pushed.
-
-> **Note:** Beta builds use version tags like `0.2.2b1` — they are never tagged as `latest`. Your stable installation won't auto-update to a beta unless you explicitly pull a beta tag.
+`flashforge-creator5pro` and `klipper-moonraker` are compatibility aliases for
+the same image. Use `latest` for the complete fork.
 
 ## Supported Printers
 
-| Series | Models | Status |
+| Provider | Models / systems | Status |
 |---|---|---|
-| H2 | H2C, H2D, H2D Pro, H2S | Tested |
-| X1 | X1 Carbon, X1E | Tested |
-| P1 | P1P, P1S | Compatible |
-| P2 | P2S | Compatible |
-| A1 | A1, A1 Mini | Compatible |
-
-All printers require **Developer Mode** enabled for LAN access.
+| Bambu Lab | Models supported by upstream Bambuddy | Upstream-compatible |
+| FlashForge LAN | Creator 5 Pro confirmed | Experimental |
+| Klipper / Moonraker | TinyT and Trident confirmed; other Moonraker systems use capability discovery | Experimental |
 
 ## Links
 
-- **Website:** [bambuddy.cool](https://bambuddy.cool)
-- **Documentation:** [wiki.bambuddy.cool](http://wiki.bambuddy.cool)
-- **GitHub:** [github.com/maziggy/bambuddy](https://github.com/maziggy/bambuddy)
-- **Discord:** [discord.gg/aFS3ZfScHM](https://discord.gg/aFS3ZfScHM)
-- **Issues:** [GitHub Issues](https://github.com/maziggy/bambuddy/issues)
+- **Fork:** [github.com/noobydp/bambuddy](https://github.com/noobydp/bambuddy)
+- **Fork policy:** [FORK.md](https://github.com/noobydp/bambuddy/blob/main/FORK.md)
+- **Fork issues:** [GitHub Issues](https://github.com/noobydp/bambuddy/issues)
+- **Upstream:** [github.com/maziggy/bambuddy](https://github.com/maziggy/bambuddy)
+- **Upstream documentation:** [wiki.bambuddy.cool](https://wiki.bambuddy.cool)
+- **Upstream Discord:** [discord.gg/aFS3ZfScHM](https://discord.gg/aFS3ZfScHM)
 
 ## License
 
-MIT License - see [LICENSE](https://github.com/maziggy/bambuddy/blob/main/LICENSE) for details.
+GNU AGPL v3 - see
+[LICENSE](https://github.com/noobydp/bambuddy/blob/main/LICENSE) for details.

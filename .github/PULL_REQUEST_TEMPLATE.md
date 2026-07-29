@@ -11,19 +11,22 @@ Fixes #
 
 <!--
 If this PR changes user-visible behavior, config keys, ports, CLI flags,
-URLs, or installation steps, link matching PRs in the docs repos below.
+URLs, or installation steps, update the matching README, FORK.md, or docs/
+content in this repository.
 Internal refactors, bug fixes with no observable change, and test-only
 changes are exempt — just check the "not required" box and say why.
 
 See CONTRIBUTING.md → Documentation Requirements for the full rules.
 -->
 
-**Companion docs PRs** (delete lines that don't apply):
-- Wiki: maziggy/bambuddy-wiki#___
-- Website: maziggy/bambuddy-website#___
+**Fork documentation changed:**
+- File(s): ___
+
+**Optional upstream contribution** (only when independently applicable):
+- Upstream PR/docs link: ___
 
 **Pick one**:
-- [ ] Docs PR(s) linked above
+- [ ] Fork documentation updated above
 - [ ] No docs update required — reason: ___
 
 ## Type of Change
@@ -56,6 +59,7 @@ See CONTRIBUTING.md → Documentation Requirements for the full rules.
 
 - [ ] I have tested this on my local machine
 - [ ] I have tested with my printer model: <!-- e.g., X1C, P1S, A1 -->
+- [ ] Provider-specific behavior is capability-gated and fails closed
 
 ## Checklist
 

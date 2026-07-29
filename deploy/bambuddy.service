@@ -16,7 +16,7 @@
 
 [Unit]
 Description=BamBuddy - Bambu Lab Print Management
-Documentation=https://github.com/maziggy/bambuddy
+Documentation=https://github.com/noobydp/bambuddy
 After=network.target
 
 [Service]

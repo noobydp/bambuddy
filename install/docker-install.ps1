@@ -26,7 +26,7 @@
 
 .EXAMPLE
     Interactive install (cmd or PowerShell):
-      powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/maziggy/bambuddy/main/install/docker-install.ps1 -OutFile docker-install.ps1; .\docker-install.ps1"
+      powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/noobydp/bambuddy/main/install/docker-install.ps1 -OutFile docker-install.ps1; .\docker-install.ps1"
 
 .EXAMPLE
     Unattended install:
@@ -199,11 +199,11 @@ function Get-ComposeFile {
             git fetch origin
             git reset --hard origin/main
         } else {
-            git clone https://github.com/maziggy/bambuddy.git .
+            git clone https://github.com/noobydp/bambuddy.git .
         }
     } else {
         Invoke-WebRequest `
-            -Uri 'https://raw.githubusercontent.com/maziggy/bambuddy/main/docker-compose.yml' `
+            -Uri 'https://raw.githubusercontent.com/noobydp/bambuddy/main/docker-compose.yml' `
             -OutFile 'docker-compose.yml' `
             -UseBasicParsing
     }

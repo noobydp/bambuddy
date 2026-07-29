@@ -42,6 +42,9 @@ body:
         - Print Archiving
         - Monitoring & Stats
         - Print Queue & Scheduling
+        - FlashForge LAN
+        - Klipper / Moonraker
+        - Provider Architecture
         - Smart Plugs
         - Notifications
         - Spool Inventory

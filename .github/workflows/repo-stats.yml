@@ -16,9 +16,9 @@ jobs:
       - name: run-ghrs
         uses: jgehrcke/github-repo-stats@v1.4.2
         with:
-          repository: maziggy/bambuddy
-          ghtoken: ${{ secrets.GHRS_GITHUB_API_TOKEN }}
-          ghpagesprefix: https://maziggy.github.io/bambuddy
+          repository: noobydp/bambuddy
+          ghtoken: ${{ github.token }}
+          ghpagesprefix: https://noobydp.github.io/bambuddy
 
       # Inject ghcr.io container-download stats (cumulative + 30-day
       # sparkline merged into a sidecar CSV so the chart grows beyond
@@ -36,7 +36,7 @@ jobs:
       # swallows errors as opaque "exit code 1".
       - name: checkout-data-branch
         env:
-          GH_PAT: ${{ secrets.GHRS_GITHUB_API_TOKEN }}
+          GH_PAT: ${{ github.token }}
         run: |
           git clone --branch github-repo-stats --depth 1 \
             "https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}.git" \
@@ -48,9 +48,9 @@ jobs:
       - name: inject-ghcr-pulls
         run: |
           python3 source/.github/scripts/ghcr_inject.py \
-            --report data/maziggy/bambuddy/latest-report/report.html \
-            --csv    data/maziggy/bambuddy/ghcr-pulls.csv \
-            --owner  maziggy \
+            --report data/noobydp/bambuddy/latest-report/report.html \
+            --csv    data/noobydp/bambuddy/ghcr-pulls.csv \
+            --owner  noobydp \
             --pkg    bambuddy
 
       - name: commit-and-push
@@ -60,7 +60,7 @@ jobs:
             echo "no changes — skipping commit"
             exit 0
           fi
-          git add maziggy/bambuddy/latest-report/report.html \
-                  maziggy/bambuddy/ghcr-pulls.csv
+          git add noobydp/bambuddy/latest-report/report.html \
+                  noobydp/bambuddy/ghcr-pulls.csv
           git commit -m "ghcr-pulls: refresh container downloads chart"
           git push

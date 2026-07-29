@@ -2,21 +2,26 @@
   <img src="static/img/bambuddy_logo_dark.png" alt="Bambuddy Logo" width="300">
 </p>
 
-<h1 align="center">Bambuddy - Flashforge and Klipper Fork</h1>
+<h1 align="center">Bambuddy — FlashForge &amp; Klipper Fork</h1>
 
 <p align="center">
   <strong>Your printers. No cloud. Your rules.</strong><br>
-  Self-hosted command center for Bambu Lab &mdash; from one A1 to a 40-printer farm.
+  A provider-neutral, self-hosted command center for Bambu Lab, FlashForge LAN,
+  and Klipper/Moonraker printers.
 </p>
 
 <p align="center">
-  <a href="https://github.com/maziggy/bambuddy/releases"><img src="https://img.shields.io/github/v/release/maziggy/bambuddy?style=flat-square&color=blue&cacheSeconds=3600" alt="Release"></a>
-  <img src="https://github.com/maziggy/bambuddy/actions/workflows/ci.yml/badge.svg?branch=main">
-  <img src="https://github.com/maziggy/bambuddy/actions/workflows/github-code-scanning/codeql/badge.svg">
-  <img src="https://github.com/maziggy/bambuddy/actions/workflows/security.yml/badge.svg">
-  <a href="https://github.com/maziggy/bambuddy/blob/main/LICENSE"><img src="https://img.shields.io/github/license/maziggy/bambuddy?style=flat-square&cacheSeconds=3600" alt="License"></a>
-  <a href="https://github.com/maziggy/bambuddy/stargazers"><img src="https://img.shields.io/github/stars/maziggy/bambuddy?style=flat-square&cacheSeconds=3600" alt="Stars"></a>
-  <a href="https://github.com/maziggy/bambuddy/issues"><img src="https://img.shields.io/github/issues/maziggy/bambuddy?style=flat-square&cacheSeconds=3600" alt="Issues"></a>
+  <a href="https://github.com/noobydp/bambuddy/actions/workflows/ci.yml"><img src="https://github.com/noobydp/bambuddy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/noobydp/bambuddy/actions/workflows/codeql.yml"><img src="https://github.com/noobydp/bambuddy/actions/workflows/codeql.yml/badge.svg?branch=main" alt="CodeQL"></a>
+  <a href="https://github.com/noobydp/bambuddy/actions/workflows/security.yml"><img src="https://github.com/noobydp/bambuddy/actions/workflows/security.yml/badge.svg?branch=main" alt="Security"></a>
+  <a href="https://github.com/noobydp/bambuddy/actions/workflows/publish-fork-image.yml"><img src="https://github.com/noobydp/bambuddy/actions/workflows/publish-fork-image.yml/badge.svg?branch=main" alt="Docker image"></a>
+  <a href="https://github.com/noobydp/bambuddy/blob/main/LICENSE"><img src="https://img.shields.io/github/license/noobydp/bambuddy?style=flat-square&cacheSeconds=3600" alt="License"></a>
+  <a href="https://github.com/noobydp/bambuddy/issues"><img src="https://img.shields.io/github/issues/noobydp/bambuddy?style=flat-square&cacheSeconds=3600" alt="Fork issues"></a>
+  <a href="https://github.com/maziggy/bambuddy"><img src="https://img.shields.io/badge/upstream-maziggy%2Fbambuddy-6f42c1?style=flat-square&logo=github" alt="Upstream repository"></a>
+</p>
+
+<p align="center">
+  <sub><strong>Upstream Bambuddy community and support</strong></sub><br>
   <a href="https://discord.gg/aFS3ZfScHM"><img src="https://img.shields.io/discord/1461241694715645994?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2" alt="Discord"></a>
   <a href="https://github.com/sponsors/maziggy"><img src="https://img.shields.io/badge/GitHub_Sponsors-Sponsor-ea4aaa?style=flat-square&logo=github-sponsors&logoColor=white" alt="GitHub Sponsors"></a>
   <a href="https://sponsors.bambuddy.cool"><img src="https://img.shields.io/badge/Sponsors_Portal-sponsors.bambuddy.cool-2dd4bf?style=flat-square&logo=heart&logoColor=white" alt="Sponsors Portal"></a>
@@ -33,8 +38,9 @@
   <a href="#-features">Features</a> •
   <a href="#-screenshots">Screenshots</a> •
   <a href="#-quick-start">Quick Start</a> •
+  <a href="FORK.md">Fork Policy</a> •
   <a href="http://wiki.bambuddy.cool">Documentation</a> •
-  <a href="https://discord.gg/aFS3ZfScHM">Discord</a> •
+  <a href="https://github.com/noobydp/bambuddy/issues">Fork Issues</a> •
   <a href="#-contributing">Contributing</a>
 </p>
 
@@ -43,12 +49,37 @@
     <img src="https://img.shields.io/badge/🎮_Live_Demo-demo.bambuddy.cool-00ae42?style=for-the-badge&labelColor=0a0d14" alt="Live Demo">
   </a>
   <br>
-  <em>Spin up your own private Bambuddy in ~10 seconds — no install, no signup, 30-minute session.</em>
+  <em>The public demo is operated by the upstream project and may not include this fork's provider integrations.</em>
 </p>
 
 ---
 
+## About this fork
+
+This repository is an independent, maintained fork of
+[`maziggy/bambuddy`](https://github.com/maziggy/bambuddy). It is not an official
+upstream release or a replacement for the upstream project.
+
+The fork has three goals:
+
+- Add first-class **FlashForge LAN** and **Klipper/Moonraker** printer support.
+- Keep Bambu Lab behavior compatible with upstream while moving shared features
+  toward provider-neutral interfaces.
+- Regularly merge changes from upstream `main` so fixes and new Bambuddy
+  features continue to flow into this fork.
+
+Fork builds are published from this repository as
+[`ghcr.io/noobydp/bambuddy:latest`](https://github.com/noobydp/bambuddy/pkgs/container/bambuddy).
+Use this repository's [issue tracker](https://github.com/noobydp/bambuddy/issues)
+for FlashForge, Klipper, or fork-specific problems. See [FORK.md](FORK.md) for
+the provider scope, support expectations, and upstream-sync policy.
+
+---
+
 ## 📰 As Featured In
+
+> The coverage and sponsorship information below describe the upstream
+> Bambuddy project, whose work forms the foundation of this fork.
 
 > **"Bambuddy is the companion app that Bambu Lab should have built from day one."**
 > — Adam Conway, [XDA-Developers](https://www.xda-developers.com/finally-have-full-control-bambu-lab-printer-ditched-bambu-cloud/)
@@ -74,10 +105,22 @@ Two leading 3D-printing publications independently concluded that Bambuddy's fea
 📄 **[See all press coverage →](https://bambuddy.cool/press.html)**
 
 ---
-## 🌐 NEW: Flashforge Creator 5 and Klipper support
+## 🌐 FlashForge Creator 5 Pro and Klipper/Moonraker support
 <p align="center">
   <img width="800" alt="Updated dashboard" src="https://github.com/user-attachments/assets/bbe8efd8-b9c2-4944-8bbf-a4ae75c48796" />
 </p>
+
+- **FlashForge LAN:** confirmed against the Creator 5 Pro, including monitoring,
+  camera, storage, upload/start, print controls, temperatures, lights, speed,
+  thumbnails, and notifications. See
+  [the FlashForge capability notes](docs/flashforge-local-api.md).
+- **Klipper/Moonraker:** capability-discovered monitoring and controls, cameras,
+  files, macros, console, heaters, fans, motion/leveling controls, sensors, and
+  toolchanger state. Initial live validation uses modern TinyT and Trident
+  installations.
+- **Provider-neutral direction:** new shared features should depend on reported
+  capabilities rather than Bambu model checks, making future printer providers
+  easier to add.
 
 ## 🌐 NEW: Remote Printing with Proxy Mode
 
@@ -515,46 +558,45 @@ Bambuddy includes experimental FlashForge LAN support for confirmed compatible m
 ## 🚀 Quick Start
 
 ### Requirements
-- Python 3.10+ (3.11/3.12 recommended)
-- Bambu Lab printer with **Developer Mode** enabled (see below)
-- **"Store sent files on external storage"** enabled in Bambu Studio/OrcaSlicer
-- Same local network as printer
+
+- Docker on a Linux AMD64 host is recommended for the published fork image.
+- The Bambuddy host must be able to reach the printer on the local network.
+- **Bambu Lab:** Developer Mode, access code, serial number, and LAN connectivity.
+- **FlashForge:** supported LAN mode and the printer's LAN credentials.
+- **Klipper:** reachable Moonraker endpoint (normally port `7125`) and an API key
+  only when the Moonraker configuration requires one.
+- Python 3.10+ and Node.js are needed only when running directly from source.
 
 ### Installation
 
 #### Windows (Native Installer)
 
-Self-contained `.exe` — no Python, Node, Docker, or Git required on the target machine. The installer bundles Python 3.13, the React frontend, ffmpeg, and registers Bambuddy as a Windows service.
-
-Download the latest installer:
-
-> https://github.com/maziggy/bambuddy/releases/latest/download/bambuddy-windows-x64-setup.exe
-
-Run it (one-time UAC prompt — admin install) → Bambuddy starts as a Windows service and the dashboard opens at **http://localhost:8000** automatically. Data lives at `C:\ProgramData\Bambuddy\`, install at `C:\Program Files\Bambuddy\`. To update, just run a newer installer over the existing install — your database and archives are preserved.
-
-> **SmartScreen warning:** until our SignPath OSS code-signing approval lands, you'll see "Windows protected your PC" on first run. Click **More info → Run anyway**.
-
-See the [Windows Installer Guide](https://wiki.bambuddy.cool/getting-started/windows-installer/) for service management, logs, and troubleshooting.
+This fork does not currently publish a signed Windows installer release.
+Docker Desktop or a source installation from this repository will include the
+FlashForge and Klipper changes. The installer downloadable from upstream
+installs upstream Bambuddy and does **not** provide this fork's additions.
 
 #### Docker (Linux / macOS / Windows via Docker Desktop)
 
-**Option A: Pre-built image (fastest)**
+**Option A: Pre-built fork image (recommended)**
 ```bash
 mkdir bambuddy && cd bambuddy
-curl -O https://raw.githubusercontent.com/maziggy/bambuddy/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/noobydp/bambuddy/main/docker-compose.yml
 docker compose up -d
 ```
 
 **Option B: Build from source**
 ```bash
-git clone https://github.com/maziggy/bambuddy.git
+git clone https://github.com/noobydp/bambuddy.git
 cd bambuddy
 docker compose up -d --build
 ```
 
 Open **http://localhost:8000** in your browser.
 
-> **Multi-architecture support:** Pre-built images are available for `linux/amd64` and `linux/arm64` (Raspberry Pi 4/5).
+> **Published architecture:** The fork's pre-built image currently targets
+> `linux/amd64`, including typical Unraid servers. Other architectures can
+> build the repository from source.
 
 > **macOS/Windows users:** Docker Desktop doesn't support `network_mode: host`. Edit docker-compose.yml: comment out `network_mode: host` and uncomment the `ports:` section. Printer discovery won't work - add printers manually by IP.
 
@@ -590,20 +632,19 @@ docker compose pull && docker compose up -d
 cd bambuddy && git pull && docker compose up -d --build
 ```
 
-**Daily Beta Builds:**
-
-Beta builds with the latest fixes are pushed regularly to the same beta version tag:
+**Fork image tags:**
 
 ```bash
-# Pull the current beta
-docker pull ghcr.io/maziggy/bambuddy:0.2.2b1
-# or from Docker Hub
-docker pull maziggy/bambuddy:0.2.2b1
+# Recommended combined build
+docker pull ghcr.io/noobydp/bambuddy:latest
+
+# Compatibility aliases currently point to the same combined build
+docker pull ghcr.io/noobydp/bambuddy:flashforge-creator5pro
+docker pull ghcr.io/noobydp/bambuddy:klipper-moonraker
 ```
 
-Use [Watchtower](https://containrrr.dev/watchtower/) to automatically update when new daily builds are pushed.
-
-> **Note:** Beta builds use version tags like `0.2.2b1` — they are never tagged as `latest`. Your stable installation won't auto-update to a beta unless you explicitly pull a beta tag.
+The image is rebuilt from `main` after each accepted change. `latest` is the
+canonical tag for installations that should receive all fork features.
 
 **Useful Commands:**
 
@@ -669,7 +710,7 @@ services:
 
 ```bash
 # Clone and setup
-git clone https://github.com/maziggy/bambuddy.git
+git clone https://github.com/noobydp/bambuddy.git
 cd bambuddy
 python3 -m venv venv
 source venv/bin/activate
@@ -683,15 +724,18 @@ Open **http://localhost:8000** and add your printer!
 
 > **Need detailed instructions?** See the [Installation Guide](http://wiki.bambuddy.cool/getting-started/installation/)
 
-### Windows Native Installation
+### Windows Docker Desktop helper
 
-Windows PowerShell (run as Administrator — the installer self-elevates via UAC if not):
+Run from PowerShell with Docker Desktop already installed:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/maziggy/bambuddy/main/install/windows-installer.ps1 -OutFile windows-installer.ps1; .\windows-installer.ps1"
+powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/noobydp/bambuddy/main/install/docker-install.ps1 -OutFile docker-install.ps1; .\docker-install.ps1"
 ```
 
-> Installs Bambuddy natively on Windows using Git, Python, a virtual environment, separate data/log directories, and optional NSSM Windows Service registration. See the [Windows Installer Guide](http://wiki.bambuddy.cool/getting-started/windows-installer/) for parameters and unattended-install options.
+The helper downloads this fork's Compose configuration, switches it from host
+networking to Windows-compatible port mappings, and starts Bambuddy. Printer
+discovery is unavailable through Docker Desktop, so add printers manually by
+IP address.
 
 ### Enabling Developer Mode
 
@@ -717,27 +761,37 @@ In Bambu Studio or OrcaSlicer, enable **"Store sent files on external storage"**
 
 ## 📚 Documentation
 
-Full documentation available at **[wiki.bambuddy.cool](http://wiki.bambuddy.cool)**:
+The upstream documentation at
+**[wiki.bambuddy.cool](https://wiki.bambuddy.cool)** remains the best reference
+for shared Bambuddy features:
 
-- [Installation](http://wiki.bambuddy.cool/getting-started/installation/) — All installation methods
-- [Getting Started](http://wiki.bambuddy.cool/getting-started/) — First printer setup
-- [Features](http://wiki.bambuddy.cool/features/) — Detailed feature guides
-- [Troubleshooting](http://wiki.bambuddy.cool/reference/troubleshooting/) — Common issues & solutions
-- [API Reference](http://wiki.bambuddy.cool/reference/api/) — REST API documentation
+- [Installation](https://wiki.bambuddy.cool/getting-started/installation/) — Shared installation concepts
+- [Getting Started](https://wiki.bambuddy.cool/getting-started/) — Core Bambuddy setup
+- [Features](https://wiki.bambuddy.cool/features/) — Detailed upstream feature guides
+- [Troubleshooting](https://wiki.bambuddy.cool/reference/troubleshooting/) — Common issues
+- [API Reference](https://wiki.bambuddy.cool/reference/api/) — REST API documentation
+
+Fork-specific documentation lives in this repository:
+
+- [Fork goals and upstream relationship](FORK.md)
+- [FlashForge LAN capability notes](docs/flashforge-local-api.md)
+- [Updating this fork](UPDATING.md)
+- [Server-side slicer](slicer-api/README.md)
 
 ---
 
 ## 🖨️ Supported Printers
 
-| Series | Models |
-|--------|--------|
-| X1 | X1, X1 Carbon, X1E |
-| X2 | X2D |
-| H2 | H2D, H2D Pro, H2C, H2S |
-| P1 | P1P, P1S |
-| P2 | P2S |
-| A1 | A1, A1 Mini |
-| A2 | A2L |
+| Provider | Confirmed or inherited coverage | Connection | Status |
+|----------|---------------------------------|------------|--------|
+| Bambu Lab | X1/X2, H2, P1/P2, A1/A2 families inherited from upstream | Developer Mode over LAN | Upstream-compatible |
+| FlashForge | Creator 5 Pro confirmed; other compatible LAN models require testing | FlashForge LAN API | Experimental |
+| Klipper / Moonraker | Modern TinyT and Trident installations confirmed; other Moonraker printers are capability-discovered | Moonraker HTTP/WebSocket, normally port 7125 | Experimental |
+
+Experimental means the provider is usable and tested on the listed hardware,
+but it has less model coverage than the inherited Bambu integration. Please
+include the exact printer, firmware/Klipper version, and diagnostics when
+reporting additional model results.
 
 ---
 
@@ -755,29 +809,17 @@ Full documentation available at **[wiki.bambuddy.cool](http://wiki.bambuddy.cool
 
 ## 🤝 Contributing
 
-Contributions welcome! Ways to help:
+Contributions to the fork are welcome, particularly provider-neutral changes,
+FlashForge model validation, and Klipper/Moonraker capability coverage.
 
-1. **📝 Document** — Improve the wiki and guides *(urgently needed!)*
+1. **📝 Document** — Improve fork-specific guides and capability notes
 2. **Test** — Report issues with your printer model
 3. **Translate** — Add new languages
 4. **Code** — Submit PRs for bugs or features
-5. **🔒 Security review** — *(specifically wanted, see below)*
 
-Not sure where to start? Reach out on [Discord](https://discord.gg/aFS3ZfScHM) or email **martin@bambuddy.cool** — I'll help you find something that fits.
-
-### 🔒 Looking for a security-focused contributor
-
-I'm bringing on a contributor whose specific focus is keeping an eye on Bambuddy's security.
-
-Concretely:
-
-Track the `dev` branch and flag changes touching auth, permissions, token handling, or the CI security backstops. Async post-merge — no gating of in-flight PRs.
-
-What matters more than formal qualifications: fail-closed thinking by default, comfortable reading the auth layer (FastAPI + SQLAlchemy on the backend, a small React surface), willing to push back on `except Exception` shapes in security-sensitive code.
-
-No fixed time commitment. If you're interested — or know someone who fits — email `martin@bambuddy.cool` or DM on Discord.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Open a [fork issue](https://github.com/noobydp/bambuddy/issues) before a
+substantial change so provider scope and upstream compatibility can be
+discussed. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
@@ -789,6 +831,8 @@ AGPL-3.0 License — see [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments
 
+- [maziggy/bambuddy](https://github.com/maziggy/bambuddy) and its contributors
+  for the upstream project this fork builds upon
 - [SpoolEase](https://github.com/yanshay/SpoolEase) by yanshay — early inspiration for NFC-based spool tracking and AMS inventory concepts
 - [Bambu Lab](https://bambulab.com/) for amazing printers
 - The reverse engineering community for protocol documentation
@@ -796,9 +840,9 @@ AGPL-3.0 License — see [LICENSE](LICENSE) for details.
 
 ---
 
-## 💖 Support Bambuddy
+## 💖 Support the upstream Bambuddy project
 
-Bambuddy stays independent because real people support it directly. If Bambuddy makes your printers more useful, please consider:
+The sponsorship links below support the upstream project and its maintainers:
 
 - **[GitHub Sponsors](https://github.com/sponsors/maziggy)** — five recurring tiers from $5/mo (Backer) to $300/mo (Corporate). Supporter+ ($15/mo) get access to a private sponsors space with a monthly newsletter and early release notes. Patron+ ($35/mo) vote on the quarterly roadmap. Sustaining Sponsor+ ($150/mo) get a direct async email line for technical questions (~2-3 business days). Corporate ($300/mo) get priority email response (next business day), README header logo, sitewide footer logo on [bambuddy.cool](https://bambuddy.cool), and [Press page](https://bambuddy.cool/press.html) placement.
 - **[Ko-fi](https://ko-fi.com/maziggy)** — one-time tip or recurring.
@@ -810,8 +854,8 @@ Sponsors get listed in [BACKERS.md](BACKERS.md). Need commercial support (SLA, m
 <p align="center">
   Made with ❤️ for the 3D printing community
   <br><br>
-  <a href="https://discord.gg/aFS3ZfScHM">Join our Discord</a> •
-  <a href="https://github.com/maziggy/bambuddy/issues">Report Bug</a> •
-  <a href="https://github.com/maziggy/bambuddy/issues">Request Feature</a> •
-  <a href="http://wiki.bambuddy.cool">Documentation</a>
+  <a href="https://github.com/maziggy/bambuddy">Upstream Project</a> •
+  <a href="https://github.com/noobydp/bambuddy/issues">Report Fork Bug</a> •
+  <a href="https://github.com/noobydp/bambuddy/issues">Request Fork Feature</a> •
+  <a href="https://wiki.bambuddy.cool">Upstream Documentation</a>
 </p>
