@@ -7,6 +7,7 @@ WORKDIR /app
 # Install system dependencies for testing
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies including test dependencies.

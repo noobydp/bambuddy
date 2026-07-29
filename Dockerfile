@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     iproute2 \
     libcap2-bin \
+    libgl1 \
     openssh-client \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
