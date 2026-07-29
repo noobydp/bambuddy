@@ -21,20 +21,6 @@
 </p>
 
 <p align="center">
-  <sub><strong>Upstream Bambuddy community and support</strong></sub><br>
-  <a href="https://discord.gg/aFS3ZfScHM"><img src="https://img.shields.io/discord/1461241694715645994?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2" alt="Discord"></a>
-  <a href="https://github.com/sponsors/maziggy"><img src="https://img.shields.io/badge/GitHub_Sponsors-Sponsor-ea4aaa?style=flat-square&logo=github-sponsors&logoColor=white" alt="GitHub Sponsors"></a>
-  <a href="https://sponsors.bambuddy.cool"><img src="https://img.shields.io/badge/Sponsors_Portal-sponsors.bambuddy.cool-2dd4bf?style=flat-square&logo=heart&logoColor=white" alt="Sponsors Portal"></a>
-  <a href="https://ko-fi.com/maziggy"><img src="https://img.shields.io/badge/Ko--fi-Support-ff5e5b?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi" target=_blank></a>
-</p>
-
-<p align="center">
-  <sub><strong>Backed by</strong></sub><br>
-  <a href="https://northpole3dprinting.com/"><img src="static/img/sponsors/northpole-3d-printing.jpg" alt="North Pole 3D Printing" height="60"></a>
-</p>
-
-<p align="center">
-  <a href="https://demo.bambuddy.cool"><strong>🎮 Try the Live Demo</strong></a> •
   <a href="#-features">Features</a> •
   <a href="#-screenshots">Screenshots</a> •
   <a href="#-quick-start">Quick Start</a> •
@@ -42,14 +28,6 @@
   <a href="http://wiki.bambuddy.cool">Documentation</a> •
   <a href="https://github.com/noobydp/bambuddy/issues">Fork Issues</a> •
   <a href="#-contributing">Contributing</a>
-</p>
-
-<p align="center">
-  <a href="https://demo.bambuddy.cool">
-    <img src="https://img.shields.io/badge/🎮_Live_Demo-demo.bambuddy.cool-00ae42?style=for-the-badge&labelColor=0a0d14" alt="Live Demo">
-  </a>
-  <br>
-  <em>The public demo is operated by the upstream project and may not include this fork's provider integrations.</em>
 </p>
 
 ---
@@ -74,35 +52,21 @@ Use this repository's [issue tracker](https://github.com/noobydp/bambuddy/issues
 for FlashForge, Klipper, or fork-specific problems. See [FORK.md](FORK.md) for
 the provider scope, support expectations, and upstream-sync policy.
 
----
+This fork would not exist without the upstream project and its contributors.
+Please support upstream as well:
 
-## 📰 As Featured In
-
-> The coverage and sponsorship information below describe the upstream
-> Bambuddy project, whose work forms the foundation of this fork.
-
-> **"Bambuddy is the companion app that Bambu Lab should have built from day one."**
-> — Adam Conway, [XDA-Developers](https://www.xda-developers.com/finally-have-full-control-bambu-lab-printer-ditched-bambu-cloud/)
-
-<p align="center">
-  <a href="https://hackaday.com/2026/06/13/bambuddy-says-bye-to-bambu-lab-cloud-services/"><img src="https://img.shields.io/badge/Hackaday-Read-F2A724?style=flat-square&labelColor=000000" alt="Hackaday"></a>
-  <a href="https://www.xda-developers.com/finally-have-full-control-bambu-lab-printer-ditched-bambu-cloud/"><img src="https://img.shields.io/badge/XDA--Developers-Read-C8102E?style=flat-square" alt="XDA-Developers"></a>
-  <a href="https://www.howtogeek.com/free-your-bambu-lab-3d-printer-from-the-cloud/"><img src="https://img.shields.io/badge/How--To%20Geek-Read-33A6CA?style=flat-square" alt="How-To Geek"></a>
-  <a href="https://www.makeuseof.com/free-browser-tool-beats-bambu-lab-at-own-game/"><img src="https://img.shields.io/badge/MakeUseOf-Read-E02D2D?style=flat-square" alt="MakeUseOf"></a>
-  <a href="https://www.fabbaloo.com/news/bambuddy-launches-as-open-source-alternative-to-bambu-labs-cloud"><img src="https://img.shields.io/badge/Fabbaloo-Read-F77B0F?style=flat-square" alt="Fabbaloo"></a>
-  <a href="https://itsfoss.com/news/bambuddy-self-hosted-bambu-lab-alternative/"><img src="https://img.shields.io/badge/It's%20FOSS-Read-00B5AD?style=flat-square" alt="It's FOSS"></a>
-  <a href="https://www.igorslab.de/en/bambuddy-the-silent-alternative-to-the-bamboo-cloud/"><img src="https://img.shields.io/badge/Igor's%20Lab-Read-E10000?style=flat-square" alt="Igor's Lab"></a>
-  <a href="https://3druck.com/en/programs/bambuddy-open-source-tool-replaces-bambu-cloud-for-management-and-automation-of-3d-print-jobs-38153226/"><img src="https://img.shields.io/badge/3Druck-Read-0080C0?style=flat-square" alt="3Druck"></a>
-  <a href="https://www.fastblinker.com/bambuddy-the-open-source-solution-thats-revolutionizing-bambu-lab-3d-printer-management/"><img src="https://img.shields.io/badge/FastBlinker-Read-00B0FF?style=flat-square" alt="FastBlinker"></a>
-</p>
-
-Two leading 3D-printing publications independently concluded that Bambuddy's feature set **already exceeds Bambu's own cloud**:
-
-> *"The features seem to exceed those provided by Bambu Lab's own cloud."* — [Fabbaloo](https://www.fabbaloo.com/news/bambuddy-launches-as-open-source-alternative-to-bambu-labs-cloud)
->
-> *"The list of functions seems so extensive that it even goes beyond what Bambu Lab offers in its own cloud."* — [3Druck.com](https://3druck.com/en/programs/bambuddy-open-source-tool-replaces-bambu-cloud-for-management-and-automation-of-3d-print-jobs-38153226/)
-
-📄 **[See all press coverage →](https://bambuddy.cool/press.html)**
+- **Explore and star
+  [`maziggy/bambuddy`](https://github.com/maziggy/bambuddy)**, and use its
+  [documentation](https://wiki.bambuddy.cool) and
+  [discussions](https://github.com/maziggy/bambuddy/discussions) for shared
+  Bambuddy features.
+- **Contribute generally useful fixes upstream.** If a problem or improvement
+  also applies to an unmodified Bambuddy installation, consider reporting or
+  contributing it to upstream. FlashForge, Klipper, and fork-specific provider
+  work should be reported here.
+- **Support the upstream maintainer** through
+  [GitHub Sponsors](https://github.com/sponsors/maziggy) or
+  [Ko-fi](https://ko-fi.com/maziggy).
 
 ---
 ## 🌐 FlashForge Creator 5 Pro and Klipper/Moonraker support
@@ -398,29 +362,6 @@ Bambuddy includes experimental FlashForge LAN support for confirmed compatible m
 </table>
 
 **Plus:** Configurable slicer (Bambu Studio / OrcaSlicer) • Customizable themes (style, background, accent) • Mobile responsive • Keyboard shortcuts • Multi-language (EN/DE/JA/IT) • Auto updates • Database backup/restore • System info dashboard
-
----
-
-## 🎬 Demo
-
-<p align="center">
-  <a href="https://demo.bambuddy.cool">
-    <img src="https://img.shields.io/badge/🎮_Try_It_Live-demo.bambuddy.cool-00ae42?style=for-the-badge&labelColor=0a0d14" alt="Live Demo">
-  </a>
-  <br>
-  <em>Spin up your own private Bambuddy with simulated printers and pre-loaded print history. Click around freely — it's your sandbox. ~10 seconds to spawn, 30-minute session, no signup.</em>
-</p>
-
-<p align="center">
-  <strong>Prefer a video walkthrough?</strong>
-</p>
-
-<p align="center">
-  <a href="https://youtu.be/bmq2Z0lEXeo">
-    <img src="https://img.youtube.com/vi/bmq2Z0lEXeo/maxresdefault.jpg" alt="Bambuddy Demo Video" width="800">
-  </a>
-  <br><em>Click to watch the demo on YouTube</em>
-</p>
 
 ---
 
@@ -837,17 +778,6 @@ AGPL-3.0 License — see [LICENSE](LICENSE) for details.
 - [Bambu Lab](https://bambulab.com/) for amazing printers
 - The reverse engineering community for protocol documentation
 - All testers and contributors
-
----
-
-## 💖 Support the upstream Bambuddy project
-
-The sponsorship links below support the upstream project and its maintainers:
-
-- **[GitHub Sponsors](https://github.com/sponsors/maziggy)** — five recurring tiers from $5/mo (Backer) to $300/mo (Corporate). Supporter+ ($15/mo) get access to a private sponsors space with a monthly newsletter and early release notes. Patron+ ($35/mo) vote on the quarterly roadmap. Sustaining Sponsor+ ($150/mo) get a direct async email line for technical questions (~2-3 business days). Corporate ($300/mo) get priority email response (next business day), README header logo, sitewide footer logo on [bambuddy.cool](https://bambuddy.cool), and [Press page](https://bambuddy.cool/press.html) placement.
-- **[Ko-fi](https://ko-fi.com/maziggy)** — one-time tip or recurring.
-
-Sponsors get listed in [BACKERS.md](BACKERS.md). Need commercial support (SLA, multi-printer consulting)? Email `martin@bambuddy.cool`.
 
 ---
 
