@@ -652,9 +652,7 @@ class MoonrakerClient:
                 build_volume = f"{x:g} × {y:g} × {z:g} mm"
         free_storage = self._disk_usage.get("free")
         remaining_disk_gb = (
-            round(free_storage / (1024**3), 1)
-            if isinstance(free_storage, (int, float)) and free_storage >= 0
-            else None
+            round(free_storage / (1024**3), 1) if isinstance(free_storage, (int, float)) and free_storage >= 0 else None
         )
 
         self.state.temperatures = temperatures
