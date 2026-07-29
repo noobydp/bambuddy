@@ -341,6 +341,7 @@ class PrinterCapabilities(BaseModel):
     can_update_firmware: bool = False
     can_virtual_printer: bool = False
     can_manage_material_system: bool = False
+    can_read_rfid: bool = False
     can_set_fan: bool = False
     can_set_speed_factor: bool = False
     can_set_flow_factor: bool = False

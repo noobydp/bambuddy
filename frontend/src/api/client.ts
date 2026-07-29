@@ -627,6 +627,7 @@ export interface PrinterCapabilities {
   can_update_firmware?: boolean;
   can_virtual_printer?: boolean;
   can_manage_material_system?: boolean;
+  can_read_rfid?: boolean;
   can_set_fan?: boolean;
   can_set_speed_factor?: boolean;
   can_set_flow_factor?: boolean;

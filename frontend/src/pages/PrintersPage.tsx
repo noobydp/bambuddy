@@ -1561,12 +1561,12 @@ function mapModelCode(ssdpModel: string | null): string {
   return modelMap[ssdpModel] || ssdpModel;
 }
 
-// ─── AMS Name Hover Card ──────────────────────────────────────────────────────
-// Wraps the AMS label (e.g. "AMS-A") and shows a popup with:
+// ─── AMS Name Details Popover ─────────────────────────────────────────────────
+// Wraps the AMS label (e.g. "AMS-A") and opens details on click:
 //  • User-defined friendly name (editable, protected by printers:update)
 //  • AMS serial number
 //  • AMS firmware version
-export function AmsNameHoverCard({
+export function AmsNamePopover({
   ams,
   printerId,
   label,
@@ -1589,18 +1589,18 @@ export function AmsNameHoverCard({
   const [editValue, setEditValue] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [isInputFocused, setIsInputFocused] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
+  const triggerButtonRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const popupId = `ams-details-${printerId}-${ams.id}`;
 
   useEffect(() => {
     if (isVisible) {
       setEditValue(amsLabels?.[ams.id] ?? '');
       setSaveError(null);
       requestAnimationFrame(() => {
-        if (triggerRef.current && cardRef.current) {
-          const rect = triggerRef.current.getBoundingClientRect();
+        if (triggerButtonRef.current && cardRef.current) {
+          const rect = triggerButtonRef.current.getBoundingClientRect();
           const spaceAbove = rect.top - 56;
           const spaceBelow = window.innerHeight - rect.bottom;
           setPosition(spaceAbove < cardRef.current.offsetHeight + 12 && spaceBelow > spaceAbove ? 'bottom' : 'top');
@@ -1609,17 +1609,28 @@ export function AmsNameHoverCard({
     }
   }, [isVisible, amsLabels, ams.id]);
 
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => setIsVisible(true), 80);
-  };
-  const handleMouseLeave = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    if (!isInputFocused) {
-      timeoutRef.current = setTimeout(() => setIsVisible(false), 200);
-    }
-  };
-  useEffect(() => () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); }, []);
+  useEffect(() => {
+    if (!isVisible) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!triggerRef.current?.contains(event.target as Node)) {
+        setIsVisible(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsVisible(false);
+        triggerButtonRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isVisible]);
 
   const handleSave = async () => {
     if (!canEdit) return;
@@ -1660,22 +1671,34 @@ export function AmsNameHoverCard({
     <div
       ref={triggerRef}
       className="relative inline-block"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
     >
-      {children}
+      <button
+        ref={triggerButtonRef}
+        type="button"
+        className="block max-w-full cursor-pointer border-0 bg-transparent p-0 text-left"
+        aria-expanded={isVisible}
+        aria-controls={isVisible ? popupId : undefined}
+        aria-haspopup="dialog"
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsVisible((visible) => !visible);
+        }}
+      >
+        {children}
+      </button>
 
       {isVisible && (
         <div
           ref={cardRef}
+          id={popupId}
+          role="dialog"
           className={`
             absolute left-0 z-50
             ${position === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'}
             animate-in fade-in-0 zoom-in-95 duration-150
           `}
           style={{ maxWidth: 'calc(100vw - 24px)' }}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
+          onClick={(event) => event.stopPropagation()}
         >
           <div className="w-52 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-xl overflow-hidden backdrop-blur-sm p-2.5 space-y-2">
             {/* AMS auto-label */}
@@ -1710,12 +1733,6 @@ export function AmsNameHoverCard({
                 value={editValue}
                 onChange={(e) => canEdit && setEditValue(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-                onFocus={() => setIsInputFocused(true)}
-                onBlur={() => {
-                  setIsInputFocused(false);
-                  if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                    timeoutRef.current = setTimeout(() => setIsVisible(false), 200);
-                }}
                 placeholder={canEdit ? t('printers.amsPopup.friendlyNamePlaceholder') : (amsLabels?.[ams.id] || '—')}
                 disabled={!canEdit}
                 title={!canEdit ? t('printers.amsPopup.noEditPermission') : undefined}
@@ -1974,7 +1991,9 @@ function PrinterCard({
     can_update_firmware: legacyBambuCapabilities,
     can_virtual_printer: legacyBambuCapabilities,
     can_manage_material_system: legacyBambuCapabilities,
+    can_read_rfid: legacyBambuCapabilities,
   };
+  const canReadRfid = capabilities.can_read_rfid ?? legacyBambuCapabilities;
 
   // Check for firmware updates (cached for 5 minutes, can be disabled in settings)
   const { data: firmwareInfo } = useQuery({
@@ -3099,7 +3118,7 @@ function PrinterCard({
 
     return (
       <>
-        {includeRfid && (
+        {includeRfid && canReadRfid && (
           <button
             className={`w-full px-2 py-1.5 text-left text-xs flex items-center gap-2 rounded transition-colors ${
               hasPermission('printers:ams_rfid')
@@ -4831,8 +4850,8 @@ function PrinterCard({
                             {/* Header: Label + Stats (no icon) */}
                             <div className="flex w-full min-h-7 items-center justify-between gap-2 rounded-lg bg-bambu-dark-secondary px-2 py-1">
                               <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                                {/* AMS name — hover to see serial, firmware, and edit friendly name */}
-                                <AmsNameHoverCard
+                                {/* AMS name — click to see serial, firmware, and edit friendly name */}
+                                <AmsNamePopover
                                   ams={ams}
                                   printerId={printer.id}
                                   label={getAmsLabel(ams.id, ams.tray.length, ams.module_type)}
@@ -4843,7 +4862,7 @@ function PrinterCard({
                                   <span className="block truncate text-[10px] text-white font-medium cursor-default select-none">
                                     {amsLabels?.[ams.id] || getAmsLabel(ams.id, ams.tray.length, ams.module_type)}
                                   </span>
-                                </AmsNameHoverCard>
+                                </AmsNamePopover>
                                 {isDualNozzle && (isLeftNozzle || isRightNozzle) && (
                                   <NozzleBadge side={isLeftNozzle ? 'L' : 'R'} />
                                 )}
@@ -5096,7 +5115,7 @@ function PrinterCard({
                                 return (
                                   <div key={slotIdx} className={`relative group w-full ${filamentSlotClass}`}>
                                     {/* Loading overlay during RFID re-read */}
-                                    {isRefreshing && (
+                                    {canReadRfid && isRefreshing && (
                                       <div className="absolute inset-0 bg-bambu-dark-tertiary/80 rounded flex items-center justify-center z-20">
                                         <RefreshCw className="w-4 h-4 text-bambu-green animate-spin" />
                                       </div>
@@ -5393,9 +5412,9 @@ function PrinterCard({
                           <div key={ams.id} style={htCardStyle} className="min-w-0 p-2 bg-bambu-dark rounded-[10px] space-y-1">
                             {/* Row 1: Label + Nozzle + Drying */}
                             <div className="flex w-full min-h-7 items-center gap-1.5 rounded-lg bg-bambu-dark-secondary px-2 py-1">
-                              {/* AMS name — hover to see serial, firmware, and edit friendly name */}
+                              {/* AMS name — click to see serial, firmware, and edit friendly name */}
                               <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                                <AmsNameHoverCard
+                                <AmsNamePopover
                                   ams={ams}
                                   printerId={printer.id}
                                   label={getAmsLabel(ams.id, ams.tray.length, ams.module_type)}
@@ -5406,7 +5425,7 @@ function PrinterCard({
                                   <span className="block truncate text-[10px] text-white font-medium cursor-default select-none">
                                     {amsLabels?.[ams.id] || getAmsLabel(ams.id, ams.tray.length, ams.module_type)}
                                   </span>
-                                </AmsNameHoverCard>
+                                </AmsNamePopover>
                                 {isDualNozzle && (isLeftNozzle || isRightNozzle) && (
                                   <NozzleBadge side={isLeftNozzle ? 'L' : 'R'} />
                                 )}
@@ -5481,7 +5500,7 @@ function PrinterCard({
                               {/* Slot wrapper with loading overlay */}
                               <div className="relative group min-w-14 flex-1">
                                 {/* Loading overlay during RFID re-read */}
-                                {isHtRefreshing && (
+                                {canReadRfid && isHtRefreshing && (
                                   <div className="absolute inset-0 bg-bambu-dark-tertiary/80 rounded flex items-center justify-center z-20">
                                     <RefreshCw className="w-4 h-4 text-bambu-green animate-spin" />
                                   </div>

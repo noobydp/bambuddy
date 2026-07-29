@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '../utils';
-import { PrintersPage } from '../../pages/PrintersPage';
+import { AmsNamePopover, PrintersPage } from '../../pages/PrintersPage';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 
@@ -113,6 +113,46 @@ describe('PrintersPage', () => {
         return HttpResponse.json([]);
       })
     );
+  });
+
+  it('opens AMS details on click, not hover', async () => {
+    const user = userEvent.setup();
+    render(
+      <AmsNamePopover
+        ams={{
+          id: 0,
+          humidity: null,
+          temp: null,
+          is_ams_ht: false,
+          serial_number: '',
+          sw_ver: '',
+          tray: [],
+          dry_time: 0,
+          dry_status: 0,
+          dry_sub_status: 0,
+          dry_sf_reason: [],
+          dry_target_temp: null,
+          dry_filament: null,
+          module_type: 'flashforge_ifs',
+        }}
+        printerId={5}
+        label="IFS-A"
+        canEdit={true}
+        onSaved={() => {}}
+      >
+        <span>IFS-A</span>
+      </AmsNamePopover>
+    );
+
+    const trigger = screen.getByRole('button', { name: 'IFS-A' });
+    await user.hover(trigger);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await user.click(trigger);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await user.unhover(trigger);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   describe('rendering', () => {
@@ -576,6 +616,7 @@ describe('PrintersPage', () => {
               can_update_firmware: false,
               can_virtual_printer: false,
               can_manage_material_system: false,
+              can_read_rfid: false,
             },
           });
         })

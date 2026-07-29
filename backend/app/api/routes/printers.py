@@ -200,6 +200,7 @@ def _printer_capabilities(provider: str | None, model: str | None, state=None) -
             can_update_firmware=False,
             can_virtual_printer=False,
             can_manage_material_system=False,
+            can_read_rfid=False,
             can_set_fan=has_fan,
             can_set_speed_factor=True,
             can_set_flow_factor=True,
@@ -213,6 +214,7 @@ def _printer_capabilities(provider: str | None, model: str | None, state=None) -
                 "can_update_firmware": outside_scope,
                 "can_virtual_printer": "Virtual Printer emulates the Bambu LAN protocol.",
                 "can_manage_material_system": "Klipper filament sensors are exposed as sensors, not an AMS.",
+                "can_read_rfid": "Moonraker does not expose a Bambu AMS RFID reader.",
             },
         )
     if provider == PROVIDER_FLASHFORGE:
@@ -242,6 +244,7 @@ def _printer_capabilities(provider: str | None, model: str | None, state=None) -
             can_update_firmware=False,
             can_virtual_printer=False,
             can_manage_material_system=False,
+            can_read_rfid=False,
             unsupported_reasons={
                 "can_airduct_mode": local_api_gap,
                 "can_bed_jog": local_api_gap,
@@ -256,6 +259,7 @@ def _printer_capabilities(provider: str | None, model: str | None, state=None) -
                 "can_update_firmware": "FlashForge firmware is managed by the printer; Bambuddy's updater only supports Bambu firmware packages.",
                 "can_virtual_printer": "Bambuddy's Virtual Printer emulates the Bambu LAN protocol.",
                 "can_manage_material_system": "The Creator 5 Pro API reports IFS slots but does not expose verified remote load/unload commands.",
+                "can_read_rfid": "The Creator 5 Pro IFS does not have an RFID reader.",
             },
         )
     return PrinterCapabilities(
@@ -282,6 +286,7 @@ def _printer_capabilities(provider: str | None, model: str | None, state=None) -
         can_update_firmware=True,
         can_virtual_printer=True,
         can_manage_material_system=True,
+        can_read_rfid=True,
     )
 
 
@@ -4364,7 +4369,14 @@ async def refresh_ams_slot(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    _reject_klipper_legacy_route(printer, "AMS RFID refresh")
+    provider = provider_for_printer(printer)
+    capabilities = _printer_capabilities(provider, printer.model, printer_manager.get_status(printer_id))
+    if not capabilities.can_read_rfid:
+        reason = capabilities.unsupported_reasons.get(
+            "can_read_rfid",
+            "RFID refresh is not supported by this printer.",
+        )
+        raise HTTPException(501, reason)
 
     client = printer_manager.get_client(printer_id)
     if not client:

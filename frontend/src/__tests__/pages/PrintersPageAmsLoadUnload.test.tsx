@@ -188,6 +188,37 @@ describe('PrintersPage - AMS load/unload (#891)', () => {
     expect(screen.getByText('Unload').closest('button')).toBeDisabled();
   });
 
+  it('hides RFID re-read when the printer has no RFID reader', async () => {
+    server.use(
+      http.get('/api/v1/printers/', () =>
+        HttpResponse.json([
+          {
+            ...mockPrinter,
+            name: 'Creator 5 Pro',
+            provider: 'flashforge',
+            model: 'FlashForge Creator 5 Pro',
+          },
+        ]),
+      ),
+      http.get('/api/v1/printers/:id/status', () =>
+        HttpResponse.json({
+          ...mockIdleStatusWithAms,
+          provider: 'flashforge',
+          capabilities: { can_read_rfid: false },
+        }),
+      ),
+    );
+
+    render(<PrintersPage />);
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('filament-slot').length).toBeGreaterThan(0);
+    });
+
+    await hoverSlot(screen.getAllByTestId('filament-slot')[0]);
+    expect(screen.queryByText('Re-read RFID')).not.toBeInTheDocument();
+  });
+
   it('external spool slot exposes Load and posts tray_id=254', async () => {
     const user = userEvent.setup();
     let captured: string | null = null;

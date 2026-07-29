@@ -634,6 +634,8 @@ class TestPrintersAPI:
         assert capabilities["can_update_firmware"] is False
         assert capabilities["can_virtual_printer"] is False
         assert capabilities["can_manage_material_system"] is False
+        assert capabilities["can_read_rfid"] is False
+        assert "does not have an RFID reader" in capabilities["unsupported_reasons"]["can_read_rfid"]
         assert "known LAN API" in capabilities["unsupported_reasons"]["can_skip_objects"]
         assert "file listing/upload" in capabilities["unsupported_reasons"]["can_download_files"]
 
@@ -1388,6 +1390,23 @@ class TestAMSRefreshAPI:
 
             assert response.status_code == 400
             assert "not connected" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_ams_refresh_flashforge_unsupported(self, async_client: AsyncClient, printer_factory):
+        """Creator 5 Pro has no RFID reader, so the endpoint must fail closed."""
+        printer = await printer_factory(name="Creator", model="FlashForge Creator 5 Pro")
+        mock_client = MagicMock()
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_status.return_value = None
+            mock_pm.get_client.return_value = mock_client
+
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/ams/0/slot/0/refresh")
+
+        assert response.status_code == 501
+        assert "does not have an RFID reader" in response.json()["detail"]
+        mock_client.ams_refresh_tray.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.integration
