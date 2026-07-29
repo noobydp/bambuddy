@@ -237,6 +237,110 @@ class TestSliceLibraryFile:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_step_source_is_converted_to_stl_before_sidecar_dispatch(
+        self,
+        async_client: AsyncClient,
+        db_session,
+        monkeypatch,
+        slice_test_setup,
+    ):
+        from backend.app.services import step_converter as step_converter_module
+
+        src_file = await db_session.get(LibraryFile, slice_test_setup["src_file_id"])
+        old_path = slice_test_setup["tmp_path"] / src_file.file_path
+        step_path = old_path.with_suffix(".step")
+        old_path.rename(step_path)
+        step_path.write_bytes(b"STEP payload")
+        src_file.filename = "Cube.step"
+        src_file.file_path = str(step_path.relative_to(slice_test_setup["tmp_path"]))
+        src_file.file_type = "step"
+        src_file.file_size = step_path.stat().st_size
+        await db_session.commit()
+
+        converted_stl = b"converted binary STL"
+        conversion_calls: list[tuple[bytes, str]] = []
+
+        def fake_convert(model_bytes: bytes, model_filename: str) -> tuple[bytes, str]:
+            conversion_calls.append((model_bytes, model_filename))
+            return converted_stl, "Cube.stl"
+
+        monkeypatch.setattr(step_converter_module, "convert_step_to_stl", fake_convert)
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = bytes(request.content)
+            return httpx.Response(
+                status_code=200,
+                content=_make_3mf_with_settings(),
+                headers={
+                    "x-print-time-seconds": "20",
+                    "x-filament-used-g": "0.2",
+                    "x-filament-used-mm": "2.0",
+                },
+            )
+
+        _install_mock_sidecar(handler)
+        response = await async_client.post(
+            f"/api/v1/library/files/{slice_test_setup['src_file_id']}/slice",
+            json={
+                "printer_preset_id": slice_test_setup["printer_id"],
+                "process_preset_id": slice_test_setup["process_id"],
+                "filament_preset_id": slice_test_setup["filament_id"],
+            },
+        )
+        assert response.status_code == 202
+        final = await _wait_for_job(async_client, response.json()["job_id"])
+        assert final["status"] == "completed", final
+        assert conversion_calls == [(b"STEP payload", "Cube.step")]
+        assert b'filename="Cube.stl"' in captured["body"]
+        assert b"Content-Type: model/stl" in captured["body"]
+        assert converted_stl in captured["body"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_step_conversion_failure_is_a_clear_400_job_error(
+        self,
+        async_client: AsyncClient,
+        db_session,
+        monkeypatch,
+        slice_test_setup,
+    ):
+        from backend.app.services import step_converter as step_converter_module
+        from backend.app.services.step_converter import StepConversionError
+
+        src_file = await db_session.get(LibraryFile, slice_test_setup["src_file_id"])
+        old_path = slice_test_setup["tmp_path"] / src_file.file_path
+        step_path = old_path.with_suffix(".step")
+        old_path.rename(step_path)
+        step_path.write_bytes(b"broken STEP")
+        src_file.filename = "Broken.step"
+        src_file.file_path = str(step_path.relative_to(slice_test_setup["tmp_path"]))
+        src_file.file_type = "step"
+        src_file.file_size = step_path.stat().st_size
+        await db_session.commit()
+
+        def fail_conversion(_model_bytes: bytes, _model_filename: str):
+            raise StepConversionError("OpenCascade could not read the STEP structure")
+
+        monkeypatch.setattr(step_converter_module, "convert_step_to_stl", fail_conversion)
+        _install_mock_sidecar(lambda _request: pytest.fail("sidecar must not be called"))
+
+        response = await async_client.post(
+            f"/api/v1/library/files/{slice_test_setup['src_file_id']}/slice",
+            json={
+                "printer_preset_id": slice_test_setup["printer_id"],
+                "process_preset_id": slice_test_setup["process_id"],
+                "filament_preset_id": slice_test_setup["filament_id"],
+            },
+        )
+        assert response.status_code == 202
+        final = await _wait_for_job(async_client, response.json()["job_id"])
+        assert final["status"] == "failed"
+        assert final["error_status"] == 400
+        assert "STEP model could not be converted" in final["error_detail"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_bed_type_override_patches_process_profile(self, async_client: AsyncClient, slice_test_setup):
         """#1337: when SliceRequest.bed_type is set, the process JSON sent to
         the sidecar must carry curr_bed_type with that exact value. Without

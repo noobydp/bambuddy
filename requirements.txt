@@ -79,6 +79,11 @@ reportlab>=4.0.0
 trimesh>=4.0.0
 matplotlib>=3.8.0
 fast-simplification>=0.1.0
+# Headless OrcaSlicer/BambuStudio CLI builds accept mesh formats but reject
+# STEP/STP even though their desktop GUIs can import them.  Use OpenCascade's
+# server-safe, no-VTK wheel to tessellate CAD solids before dispatching them to
+# either slicer sidecar.
+cadquery-ocp-novtk>=7.9.3.1.1,<7.10
 # trimesh's 3MF loader uses networkx for scene-graph traversal and lxml
 # for the model.xml parse. Required by plate_thumbnail.py to render the
 # model out of a sliced .gcode.3mf when the BS/Orca CLI didn't embed

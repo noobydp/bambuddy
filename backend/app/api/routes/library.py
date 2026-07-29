@@ -1,5 +1,6 @@
 """API routes for File Manager (Library) functionality."""
 
+import asyncio
 import base64
 import binascii
 import contextlib
@@ -3626,6 +3627,21 @@ async def _run_slicer_with_fallback(
     # the embedded plate / model definitions remain intact.
     is_3mf = model_filename.lower().endswith(".3mf")
     primary_bytes = model_bytes
+    slicer_filename = model_filename
+    if model_filename.lower().endswith((".step", ".stp")):
+        from backend.app.services.step_converter import StepConversionError, convert_step_to_stl
+
+        try:
+            primary_bytes, slicer_filename = await asyncio.to_thread(
+                convert_step_to_stl,
+                model_bytes,
+                model_filename,
+            )
+        except StepConversionError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The STEP model could not be converted for slicing: {exc}",
+            ) from exc
     if is_3mf:
         # Strip "-1" inherit-from-parent sentinels from
         # Metadata/project_settings.config so the CLI's StaticPrintConfig
@@ -3739,7 +3755,7 @@ async def _run_slicer_with_fallback(
                 # crash-fallback uses. The resolved presets go unused here.
                 result = await service.slice_without_profiles(
                     model_bytes=primary_bytes,
-                    model_filename=model_filename,
+                    model_filename=slicer_filename,
                     plate=request.plate,
                     export_3mf=request.export_3mf,
                     request_id=progress_request_id,
@@ -3795,7 +3811,7 @@ async def _run_slicer_with_fallback(
                     plate_cb = _wrap_progress_for_plate(plate_num, plate_count)
                     per_plate = await service.slice_with_profiles(
                         model_bytes=primary_bytes,
-                        model_filename=model_filename,
+                        model_filename=slicer_filename,
                         printer_profile_json=presets["printer"],
                         process_profile_json=presets["process"],
                         filament_profile_jsons=filament_jsons,
@@ -3828,7 +3844,7 @@ async def _run_slicer_with_fallback(
             else:
                 result = await service.slice_with_profiles(
                     model_bytes=primary_bytes,
-                    model_filename=model_filename,
+                    model_filename=slicer_filename,
                     printer_profile_json=presets["printer"],
                     process_profile_json=presets["process"],
                     filament_profile_jsons=filament_jsons,
@@ -3869,7 +3885,7 @@ async def _run_slicer_with_fallback(
             # the difference to the user via used_embedded_settings.
             result = await service.slice_without_profiles(
                 model_bytes=primary_bytes,
-                model_filename=model_filename,
+                model_filename=slicer_filename,
                 plate=request.plate,
                 export_3mf=request.export_3mf,
                 request_id=progress_request_id,
