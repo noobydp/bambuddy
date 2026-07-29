@@ -7148,21 +7148,32 @@ export function AddPrinterModal({
 
   // Filter out already-added printers
   const newPrinters = discovered.filter(p => !existingSerials.includes(p.serial));
+  const selectedScanCidr = useCustomSubnet ? customSubnet.trim() : subnet.trim();
+  const usesSubnetScan = Boolean(selectedScanCidr);
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const payload: PrinterCreate = {
+      ...form,
+      name: form.name.trim(),
+      ip_address: form.ip_address.trim(),
+      serial_number: form.provider === 'klipper'
+        ? undefined
+        : (form.serial_number || '').trim() || undefined,
+      access_code: (form.access_code || '').trim() || undefined,
+    };
     if (form.provider === 'klipper') {
-      onAdd(form);
+      onAdd(payload);
       return;
     }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
-        ip_address: form.ip_address.trim(),
-        serial_number: (form.serial_number || '').trim() || undefined,
-        access_code: form.access_code || undefined,
-        provider: form.provider,
-        model: form.model || undefined,
+        ip_address: payload.ip_address,
+        serial_number: payload.serial_number,
+        access_code: payload.access_code,
+        provider: payload.provider,
+        model: payload.model || undefined,
       });
       if (result.checks.some((c) => c.status === 'fail')) {
         setSaveWarning(result);
@@ -7173,7 +7184,7 @@ export function AddPrinterModal({
     } finally {
       setCheckingSave(false);
     }
-    onAdd(form);
+    onAdd(payload);
   };
 
   const startDiscovery = async () => {
@@ -7183,11 +7194,13 @@ export function AddPrinterModal({
     setHasScanned(false);
     setScanProgress({ scanned: 0, total: 0 });
 
-    // Native installs fall back to subnet scanning when the user picks
-    // "Custom" — SSDP can't reach a printer on a different L3 segment
-    // (#1564). Docker mode always uses subnet scan (multicast unavailable).
-    const scanCidr = useCustomSubnet ? customSubnet.trim() : subnet;
-    const wantsSubnetScan = isDocker || useCustomSubnet;
+    // Active subnet probing discovers every provider and also reaches a
+    // user-selected L3 segment (#1564).
+    const scanCidr = selectedScanCidr;
+    // Moonraker and FlashForge do not advertise through Bambu SSDP. When a
+    // subnet is available, actively probe all supported provider ports even
+    // on native installs. Keep SSDP only as a fallback when no CIDR is known.
+    const wantsSubnetScan = usesSubnetScan;
 
     if (wantsSubnetScan && useCustomSubnet) {
       try {
@@ -7263,15 +7276,25 @@ export function AddPrinterModal({
   // Reuse module-level mapModelCode
 
   const selectPrinter = (printer: DiscoveredPrinter) => {
+    const detectedModel = mapModelCode(printer.model);
+    const provider = printer.provider
+      || (detectedModel.toLowerCase().includes('creator 5 pro')
+        ? 'flashforge'
+        : detectedModel.toLowerCase() === 'klipper'
+          ? 'klipper'
+          : 'bambu');
     // Don't pre-fill serial if it's a placeholder (unknown-*) - user needs to enter actual serial
     const serialNumber = printer.serial.startsWith('unknown-') ? '' : printer.serial;
     setForm({
       ...form,
       name: printer.name || '',
-      serial_number: serialNumber,
+      serial_number: provider === 'klipper' ? undefined : serialNumber,
       ip_address: printer.ip_address,
-      model: mapModelCode(printer.model),
-      provider: mapModelCode(printer.model).toLowerCase().includes('creator 5 pro') ? 'flashforge' : 'bambu',
+      access_code: provider === 'klipper' ? undefined : form.access_code,
+      model: detectedModel,
+      provider,
+      connection_port: printer.connection_port
+        ?? (provider === 'klipper' ? 7125 : provider === 'flashforge' ? 8898 : 8883),
     });
     // Clear discovery results after selection
     setDiscovered([]);
@@ -7373,14 +7396,14 @@ export function AddPrinterModal({
               {discovering ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  {(isDocker || useCustomSubnet) && scanProgress.total > 0
+                  {usesSubnetScan && scanProgress.total > 0
                     ? t('printers.discovery.scanProgress', { scanned: scanProgress.scanned, total: scanProgress.total })
                     : t('printers.discovery.scanning')}
                 </>
               ) : (
                 <>
                   <Search className="w-4 h-4" />
-                  {(isDocker || useCustomSubnet) ? t('printers.discovery.scanSubnet') : t('printers.discovery.discoverNetwork')}
+                  {usesSubnetScan ? t('printers.discovery.scanSubnet') : t('printers.discovery.discoverNetwork')}
                 </>
               )}
             </Button>
@@ -7416,13 +7439,13 @@ export function AddPrinterModal({
 
             {discovering && (
               <p className="mt-2 text-sm text-bambu-gray text-center">
-                {(isDocker || useCustomSubnet) ? t('printers.discovery.scanningSubnet') : t('printers.discovery.scanningNetwork')}
+                {usesSubnetScan ? t('printers.discovery.scanningSubnet') : t('printers.discovery.scanningNetwork')}
               </p>
             )}
 
             {hasScanned && !discovering && discovered.length === 0 && (
               <p className="mt-2 text-sm text-bambu-gray text-center">
-                {(isDocker || useCustomSubnet) ? t('printers.discovery.noPrintersFoundSubnet') : t('printers.discovery.noPrintersFoundNetwork')}
+                {usesSubnetScan ? t('printers.discovery.noPrintersFoundSubnet') : t('printers.discovery.noPrintersFoundNetwork')}
               </p>
             )}
 

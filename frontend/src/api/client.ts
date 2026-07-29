@@ -7313,6 +7313,8 @@ export interface DiscoveredPrinter {
   name: string;
   ip_address: string;
   model: string | null;
+  provider?: 'bambu' | 'flashforge' | 'klipper' | null;
+  connection_port?: number | null;
   discovered_at: string | null;
 }
 

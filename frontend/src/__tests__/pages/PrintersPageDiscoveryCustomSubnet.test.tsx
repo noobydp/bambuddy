@@ -131,7 +131,7 @@ describe('AddPrinterModal — custom subnet (#1564)', () => {
     );
   });
 
-  it('preserves the default SSDP path when the user keeps a detected subnet', async () => {
+  it('actively scans the detected subnet for every provider', async () => {
     const user = userEvent.setup();
     render(
       <AddPrinterModal
@@ -147,15 +147,67 @@ describe('AddPrinterModal — custom subnet (#1564)', () => {
       ).toBeInTheDocument();
     });
 
-    // Don't change the selection — default is the detected subnet.
+    // Don't change the selection — the detected subnet is actively scanned,
+    // because Klipper and FlashForge do not advertise through Bambu SSDP.
     const scanButton = screen.getByRole('button', {
-      name: /discover printers on network/i,
+      name: /scan subnet/i,
     });
     await user.click(scanButton);
 
     await waitFor(() => {
-      expect(ssdpStarted).toBe(true);
+      expect(scanCalls.length).toBe(1);
     });
-    expect(scanCalls.length).toBe(0);
+    expect(scanCalls[0].subnet).toBe('192.168.1.0/24');
+    expect(ssdpStarted).toBe(false);
+  });
+
+  it('selects a discovered Moonraker printer with optional credentials omitted', async () => {
+    const user = userEvent.setup();
+    const onAdd = vi.fn();
+    server.use(
+      http.get('/api/v1/discovery/scan/status', () =>
+        HttpResponse.json({ running: false, scanned: 254, total: 254 }),
+      ),
+      http.get('/api/v1/discovery/printers', () =>
+        HttpResponse.json([
+          {
+            serial: 'KLIPPER-TESTDEVICE',
+            name: 'test-klipper',
+            ip_address: '192.0.2.30',
+            model: 'Klipper',
+            provider: 'klipper',
+            connection_port: 7125,
+            discovered_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+    );
+
+    render(
+      <AddPrinterModal
+        onClose={() => {}}
+        onAdd={onAdd}
+        existingSerials={[]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: '192.168.1.0/24' })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /scan subnet/i }));
+    await user.click(await screen.findByText('test-klipper'));
+    await user.click(screen.getByRole('button', { name: /^add printer$/i }));
+
+    expect(onAdd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'test-klipper',
+        ip_address: '192.0.2.30',
+        provider: 'klipper',
+        model: 'Klipper',
+        connection_port: 7125,
+        serial_number: undefined,
+        access_code: undefined,
+      }),
+    );
   });
 });

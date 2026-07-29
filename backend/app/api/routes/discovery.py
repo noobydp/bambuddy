@@ -1,7 +1,7 @@
 """
 Printer discovery API endpoints.
 
-Provides endpoints for discovering Bambu Lab printers on the local network.
+Provides endpoints for discovering supported printers on the local network.
 Supports both SSDP discovery (for native installs) and subnet scanning (for Docker).
 """
 
@@ -62,6 +62,8 @@ class DiscoveredPrinterResponse(BaseModel):
     name: str
     ip_address: str
     model: str | None = None
+    provider: str | None = None
+    connection_port: int | None = None
     discovered_at: str | None = None
 
 
@@ -133,6 +135,8 @@ async def get_discovered_printers(
             name=p.name,
             ip_address=p.ip_address,
             model=p.model,
+            provider=p.provider,
+            connection_port=p.connection_port,
             discovered_at=p.discovered_at,
         )
         for p in printers.values()
@@ -147,7 +151,7 @@ async def start_subnet_scan(
     request: SubnetScanRequest,
     _: User | None = RequirePermissionIfAuthEnabled(Permission.DISCOVERY_SCAN),
 ):
-    """Start a subnet scan for Bambu printers.
+    """Start a subnet scan for supported printers.
 
     Use this when running in Docker where SSDP multicast doesn't work.
 

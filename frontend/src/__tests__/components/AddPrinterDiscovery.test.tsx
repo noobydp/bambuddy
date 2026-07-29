@@ -188,8 +188,8 @@ describe('AddPrinterModal Discovery', () => {
       expect(options[1].textContent).toMatch(/custom subnet/i);
     });
 
-    // Default selection leaves the SSDP path in place — the button
-    // still reads "Discover Printers on Network", not "Scan Subnet".
-    expect(screen.getByText(/discover printers/i)).toBeInTheDocument();
+    // A selected subnet uses active provider-aware probing so Moonraker and
+    // FlashForge printers are discoverable on native installs too.
+    expect(screen.getByRole('button', { name: /scan subnet/i })).toBeInTheDocument();
   });
 });

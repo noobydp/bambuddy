@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from backend.app.services.moonraker import DEFAULT_MOONRAKER_PORT, probe_moonraker_connection
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,12 +68,14 @@ SSDP_MSEARCH = (
 
 @dataclass
 class DiscoveredPrinter:
-    """Represents a discovered Bambu Lab printer."""
+    """Represents a discovered supported printer."""
 
     serial: str
     name: str
     ip_address: str
     model: str | None = None
+    provider: str | None = None
+    connection_port: int | None = None
     discovered_at: str | None = None
 
     def to_dict(self) -> dict:
@@ -80,6 +84,8 @@ class DiscoveredPrinter:
             "name": self.name,
             "ip_address": self.ip_address,
             "model": self.model,
+            "provider": self.provider,
+            "connection_port": self.connection_port,
             "discovered_at": self.discovered_at,
         }
 
@@ -319,6 +325,8 @@ class SubnetScanner:
     FTP_PORT = 990
     # FlashForge Creator 5 Pro local HTTP API
     FLASHFORGE_API_PORT = 8898
+    # Klipper's Moonraker HTTP/WebSocket API
+    MOONRAKER_PORT = DEFAULT_MOONRAKER_PORT
 
     def __init__(self):
         self._discovered: dict[str, DiscoveredPrinter] = {}
@@ -340,7 +348,7 @@ class SubnetScanner:
         return self._scanned, self._total
 
     async def scan_subnet(self, subnet: str, timeout: float = 1.0) -> list[DiscoveredPrinter]:
-        """Scan a subnet for Bambu printers.
+        """Scan a subnet for supported printers.
 
         Args:
             subnet: CIDR notation subnet (e.g., "192.168.1.0/24")
@@ -389,11 +397,12 @@ class SubnetScanner:
             self._running = False
 
     async def _probe_host(self, ip: str, timeout: float):
-        """Probe a single host for Bambu or FlashForge printer ports."""
-        ftp_open, mqtt_open, flashforge_open = await asyncio.gather(
+        """Probe a single host for Bambu, FlashForge, or Moonraker."""
+        ftp_open, mqtt_open, flashforge_open, moonraker_open = await asyncio.gather(
             self._check_port(ip, self.FTP_PORT, timeout),
             self._check_port(ip, self.MQTT_PORT, timeout),
             self._check_port(ip, self.FLASHFORGE_API_PORT, timeout),
+            self._check_port(ip, self.MOONRAKER_PORT, timeout),
         )
 
         if not (ftp_open and mqtt_open):
@@ -404,8 +413,30 @@ class SubnetScanner:
                     name=f"FlashForge at {ip}",
                     ip_address=ip,
                     model="FlashForge Creator 5 Pro",
+                    provider="flashforge",
+                    connection_port=self.FLASHFORGE_API_PORT,
                     discovered_at=datetime.now(timezone.utc).isoformat(),
                 )
+                return
+
+            if moonraker_open:
+                probe = await probe_moonraker_connection(
+                    ip,
+                    port=self.MOONRAKER_PORT,
+                    timeout=max(1.0, min(timeout * 3, 5.0)),
+                )
+                if probe.get("success"):
+                    hostname = str(probe.get("hostname") or ip)
+                    logger.info("Found Klipper/Moonraker printer %s at %s", hostname, ip)
+                    self._discovered[ip] = DiscoveredPrinter(
+                        serial=str(probe["serial_number"]),
+                        name=hostname,
+                        ip_address=ip,
+                        model="Klipper",
+                        provider="klipper",
+                        connection_port=self.MOONRAKER_PORT,
+                        discovered_at=datetime.now(timezone.utc).isoformat(),
+                    )
             return
 
         # Both Bambu ports open - likely a Bambu printer
@@ -424,6 +455,8 @@ class SubnetScanner:
             name=name or f"Printer at {ip}",
             ip_address=ip,
             model=model,
+            provider="bambu",
+            connection_port=self.MQTT_PORT,
             discovered_at=datetime.now(timezone.utc).isoformat(),
         )
         self._discovered[ip] = printer
