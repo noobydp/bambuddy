@@ -231,8 +231,11 @@ async def async_client(test_engine, db_session) -> AsyncGenerator[AsyncClient, N
         # (not the test engine), creating aiosqlite connections. Dispose those
         # connections so their background threads finish before the event loop closes.
         from backend.app.core.database import engine as real_engine
+        from backend.app.core.tasks import cancel_background_tasks
 
+        await cancel_background_tasks()
         await real_engine.dispose()
+        await asyncio.sleep(0.1)
 
     app.dependency_overrides.clear()
 

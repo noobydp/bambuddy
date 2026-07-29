@@ -83,3 +83,23 @@ def _on_task_done(task: asyncio.Task[Any]) -> None:
 def active_task_count() -> int:
     """Number of background tasks currently in flight. Used by tests."""
     return len(_background_tasks)
+
+
+async def cancel_background_tasks() -> int:
+    """Cancel and await all fire-and-forget tasks owned by this helper.
+
+    Services are expected to signal their long-running loops to stop before
+    calling this during shutdown. Awaiting cancellation here is still
+    important: database-backed tasks need a chance to leave their async
+    session context before the engine and event loop are closed.
+
+    Returns:
+        The number of in-flight tasks that were cancelled.
+    """
+    current = asyncio.current_task()
+    tasks = [task for task in _background_tasks if task is not current and not task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return len(tasks)

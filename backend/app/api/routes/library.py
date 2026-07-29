@@ -1345,10 +1345,11 @@ async def delete_folder(
 # not enumerated (``/data`` containing other users' archives, ``/root``,
 # arbitrary NFS/SMB mounts, the Bambuddy ``LOG_DIR``) could be mounted by any
 # user with ``LIBRARY_UPLOAD``. The allowlist defaults to empty and is
-# extended via the ``BAMBUDDY_EXTERNAL_ROOTS`` env var (colon-separated
-# absolute paths). The route is additionally gated on ``SETTINGS_UPDATE``
-# (admin scope) rather than ``LIBRARY_UPLOAD`` because mounting host paths
-# is an operator-level capability that crosses user boundaries.
+# extended via the ``BAMBUDDY_EXTERNAL_ROOTS`` env var (platform-separated
+# absolute paths: ``:`` on Unix, ``;`` on Windows). The route is additionally
+# gated on ``SETTINGS_UPDATE`` (admin scope) rather than ``LIBRARY_UPLOAD``
+# because mounting host paths is an operator-level capability that crosses
+# user boundaries.
 
 
 # Bambuddy-owned data directories. Hardcode-rejected even if the operator
@@ -1379,7 +1380,7 @@ def _allowed_external_roots() -> tuple[Path, ...]:
     """
     raw = os.environ.get("BAMBUDDY_EXTERNAL_ROOTS", "")
     roots: list[Path] = []
-    for entry in raw.split(":"):
+    for entry in raw.split(os.pathsep):
         entry = entry.strip()
         if not entry:
             continue
@@ -1625,7 +1626,7 @@ async def scan_external_folder(
         for cf in all_child_folders:
             if cf.id == fid and cf.external_path:
                 try:
-                    rel = str(Path(cf.external_path).relative_to(ext_path))
+                    rel = Path(cf.external_path).relative_to(ext_path).as_posix()
                     if rel != ".":
                         folder_cache[rel] = cf.id
                 except ValueError:
@@ -1644,7 +1645,11 @@ async def scan_external_folder(
         if not folder.external_show_hidden:
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
 
-        rel_dir = str(Path(dirpath).relative_to(ext_path))
+        # Use one separator for cache keys on every host. ``Path`` stringifies
+        # with backslashes on Windows, while the child-chain builder below uses
+        # forward slashes; mixing them made deep folders look absent and then
+        # eligible for deletion as empty during the same scan.
+        rel_dir = Path(dirpath).relative_to(ext_path).as_posix()
         if rel_dir == ".":
             rel_dir = ""
         seen_rel_dirs.add(rel_dir)

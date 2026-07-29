@@ -13,7 +13,7 @@ import logging
 
 import pytest
 
-from backend.app.core.tasks import active_task_count, spawn_background_task
+from backend.app.core.tasks import active_task_count, cancel_background_tasks, spawn_background_task
 
 
 @pytest.mark.asyncio
@@ -102,3 +102,27 @@ async def test_task_name_propagates():
     task = spawn_background_task(asyncio.sleep(0), name="named-spawn-test")
     assert task.get_name() == "named-spawn-test"
     await task
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_awaits_cleanup():
+    """Shutdown must wait until task ``finally`` blocks have completed."""
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+
+    async def work() -> None:
+        try:
+            started.set()
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)
+            cleaned_up.set()
+
+    spawn_background_task(work(), name="cleanup-on-shutdown")
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+
+    cancelled = await cancel_background_tasks()
+
+    assert cancelled >= 1
+    assert cleaned_up.is_set()
+    assert active_task_count() == 0
