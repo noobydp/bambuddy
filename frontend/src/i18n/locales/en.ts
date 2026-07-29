@@ -195,6 +195,16 @@ export default {
       large: 'Large cards',
       extraLarge: 'Extra large cards',
     },
+    attachedCamera: {
+      printerOptions: 'Printer options',
+      label: 'Camera on card',
+      off: 'Off',
+      top: 'Top',
+      bottom: 'Bottom',
+      moveTop: 'Move camera above card',
+      moveBottom: 'Move camera below card',
+      detach: 'Hide camera on card',
+    },
     pageView: {
       openCamWallPage: 'Open cam wall as page',
       cards: 'Cards',

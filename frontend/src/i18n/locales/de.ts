@@ -195,6 +195,16 @@ export default {
       large: 'Große Karten',
       extraLarge: 'Extra große Karten',
     },
+    attachedCamera: {
+      printerOptions: 'Druckeroptionen',
+      label: 'Kamera an Karte',
+      off: 'Aus',
+      top: 'Oben',
+      bottom: 'Unten',
+      moveTop: 'Kamera über die Karte verschieben',
+      moveBottom: 'Kamera unter die Karte verschieben',
+      detach: 'Kamera an Karte ausblenden',
+    },
     pageView: {
       openCamWallPage: 'Kamera-Wand als Seite öffnen',
       cards: 'Karten',

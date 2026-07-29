@@ -90,6 +90,25 @@ describe('CameraTile', () => {
     expect(screen.queryByAltText('H2D-Booth')).toBeNull();
   });
 
+  it('can hide the name and mode chrome for an attached card feed', async () => {
+    render(
+      <CameraTile
+        printerId={21}
+        printerName="TinyT-Attached"
+        mode="live"
+        snapshotIntervalMs={5000}
+        connected
+        showName={false}
+        showModeIndicator={false}
+      />,
+    );
+    await flushMicrotasks();
+
+    expect(screen.getByAltText('TinyT-Attached')).toBeInTheDocument();
+    expect(screen.queryByText('TinyT-Attached')).toBeNull();
+    expect(screen.queryByText('Live')).toBeNull();
+  });
+
   it('POSTs /camera/stop when leaving live mode', async () => {
     const fetchMock = vi.spyOn(global, 'fetch').mockResolvedValue(
       new Response(null, { status: 200 }),

@@ -195,6 +195,16 @@ export default {
       large: 'Schede grandi',
       extraLarge: 'Schede extra grandi',
     },
+    attachedCamera: {
+      printerOptions: 'Opzioni stampante',
+      label: 'Telecamera sulla scheda',
+      off: 'Nascosta',
+      top: 'In alto',
+      bottom: 'In basso',
+      moveTop: 'Sposta la telecamera sopra la scheda',
+      moveBottom: 'Sposta la telecamera sotto la scheda',
+      detach: 'Nascondi la telecamera dalla scheda',
+    },
     pageView: {
       openCamWallPage: 'Apri il muro telecamere come pagina',
       cards: 'Schede',

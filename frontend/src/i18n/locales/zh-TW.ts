@@ -195,6 +195,16 @@ export default {
       large: '大卡片',
       extraLarge: '超大卡片',
     },
+    attachedCamera: {
+      printerOptions: '印表機選項',
+      label: '卡片攝影機',
+      off: '隱藏',
+      top: '頂部',
+      bottom: '底部',
+      moveTop: '將攝影機移到卡片上方',
+      moveBottom: '將攝影機移到卡片下方',
+      detach: '隱藏卡片攝影機',
+    },
     pageView: {
       openCamWallPage: '在獨立頁面中開啟攝影機牆',
       cards: '卡片',

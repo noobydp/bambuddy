@@ -195,6 +195,16 @@ export default {
       large: 'Cartões grandes',
       extraLarge: 'Cartões extra grandes',
     },
+    attachedCamera: {
+      printerOptions: 'Opções da impressora',
+      label: 'Câmera no cartão',
+      off: 'Oculta',
+      top: 'Acima',
+      bottom: 'Abaixo',
+      moveTop: 'Mover a câmera para cima do cartão',
+      moveBottom: 'Mover a câmera para baixo do cartão',
+      detach: 'Ocultar a câmera do cartão',
+    },
     pageView: {
       openCamWallPage: 'Abrir o mural de câmeras como página',
       cards: 'Cartões',

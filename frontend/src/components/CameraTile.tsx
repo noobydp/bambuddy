@@ -25,6 +25,9 @@ interface CameraTileProps {
   totalLayers?: number | null;
   printName?: string | null;
   hmsErrorCount?: number;
+  showName?: boolean;
+  showModeIndicator?: boolean;
+  className?: string;
 }
 
 // Tiles render lighter than EmbeddedCameraViewer's full window: lower fps,
@@ -73,6 +76,9 @@ export function CameraTile({
   totalLayers = null,
   printName = null,
   hmsErrorCount = 0,
+  showName = true,
+  showModeIndicator = true,
+  className = '',
 }: CameraTileProps) {
   const { t } = useTranslation();
   const [bust, setBust] = useState(0);
@@ -149,7 +155,7 @@ export function CameraTile({
 
   const rootClass = `group relative aspect-video w-full overflow-hidden rounded-lg border border-bambu-dark-tertiary bg-black text-left ${
     interactive ? 'focus:outline-none focus:ring-2 focus:ring-bambu-green' : 'cursor-default'
-  }`;
+  } ${className}`;
 
   const content = (
     <>
@@ -195,55 +201,59 @@ export function CameraTile({
       )}
 
       {/* Mode indicator (top-right) */}
-      <span
-        className={`absolute right-2 top-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-          mode === 'live'
-            ? 'bg-red-500/80 text-white'
+      {showModeIndicator && (
+        <span
+          className={`absolute right-2 top-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+            mode === 'live'
+              ? 'bg-red-500/80 text-white'
+              : mode === 'snapshot'
+                ? 'bg-amber-500/70 text-black'
+                : 'bg-bambu-dark-tertiary/70 text-bambu-gray'
+          }`}
+        >
+          {mode === 'live'
+            ? t('printers.camWall.live')
             : mode === 'snapshot'
-              ? 'bg-amber-500/70 text-black'
-              : 'bg-bambu-dark-tertiary/70 text-bambu-gray'
-        }`}
-      >
-        {mode === 'live'
-          ? t('printers.camWall.live')
-          : mode === 'snapshot'
-            ? t('printers.camWall.snap')
-            : t('printers.camWall.off')}
-      </span>
+              ? t('printers.camWall.snap')
+              : t('printers.camWall.off')}
+        </span>
+      )}
 
       {/* Bottom overlay: name + (when full) print info */}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-2 pb-1.5 pt-3 text-white">
-        {showInfoStrip && (
-          <div className="mb-0.5 space-y-0.5 text-[11px] leading-tight text-white/90">
-            {fileLabel && (
-              <div className="truncate" title={fileLabel}>
-                {fileLabel}
+      {(showName || showInfoStrip) && (
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-2 pb-1.5 pt-3 text-white">
+          {showInfoStrip && (
+            <div className="mb-0.5 space-y-0.5 text-[11px] leading-tight text-white/90">
+              {fileLabel && (
+                <div className="truncate" title={fileLabel}>
+                  {fileLabel}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-bambu-gray">
+                {progressPct != null && (
+                  <span className="font-semibold text-white">{progressPct}%</span>
+                )}
+                {hasLayers && (
+                  <span>
+                    {t('printers.camWall.layer', {
+                      cur: layerNum,
+                      total: totalLayers,
+                    })}
+                  </span>
+                )}
+                {hasRemaining && (
+                  <span>
+                    {t('printers.camWall.timeLeft', {
+                      time: formatDuration((remainingMin ?? 0) * 60),
+                    })}
+                  </span>
+                )}
               </div>
-            )}
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-bambu-gray">
-              {progressPct != null && (
-                <span className="font-semibold text-white">{progressPct}%</span>
-              )}
-              {hasLayers && (
-                <span>
-                  {t('printers.camWall.layer', {
-                    cur: layerNum,
-                    total: totalLayers,
-                  })}
-                </span>
-              )}
-              {hasRemaining && (
-                <span>
-                  {t('printers.camWall.timeLeft', {
-                    time: formatDuration((remainingMin ?? 0) * 60),
-                  })}
-                </span>
-              )}
             </div>
-          </div>
-        )}
-        <span className="block truncate text-xs font-medium">{printerName}</span>
-      </div>
+          )}
+          {showName && <span className="block truncate text-xs font-medium">{printerName}</span>}
+        </div>
+      )}
     </>
   );
 

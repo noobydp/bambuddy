@@ -2,7 +2,7 @@
  * Tests for the PrintersPage component.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '../utils';
@@ -72,7 +72,11 @@ const selectToolbarDropdownOption = async (triggerName: RegExp, optionName: RegE
 
 describe('PrintersPage', () => {
   beforeEach(() => {
+    vi.mocked(localStorage.getItem).mockReset();
+    vi.mocked(localStorage.setItem).mockClear();
+    vi.mocked(localStorage.removeItem).mockClear();
     localStorage.removeItem('printerCardSize');
+    localStorage.removeItem('printerAttachedCameraPositions');
 
     server.use(
       http.get('/api/v1/printers/', () => {
@@ -189,6 +193,50 @@ describe('PrintersPage', () => {
         // Status should be shown - may vary based on state
         expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
       });
+    });
+
+    it('attaches a camera below the selected printer card and can move it above', async () => {
+      const user = userEvent.setup();
+      render(<PrintersPage />);
+
+      const stack = await screen.findByTestId('printer-card-stack-1');
+      await user.click(within(stack).getByRole('button', { name: 'Printer options' }));
+      await user.click(within(stack).getByRole('button', { name: 'Bottom' }));
+
+      const camera = await screen.findByTestId('attached-camera-1');
+      expect(camera).toHaveAttribute('data-position', 'bottom');
+      expect(stack.lastElementChild).toBe(camera);
+      await waitFor(() => {
+        expect(localStorage.setItem).toHaveBeenCalledWith(
+          'printerAttachedCameraPositions',
+          JSON.stringify({ 1: 'bottom' }),
+        );
+      });
+
+      await user.click(within(camera).getByRole('button', { name: 'Move camera above card' }));
+
+      const movedCamera = await screen.findByTestId('attached-camera-1');
+      expect(movedCamera).toHaveAttribute('data-position', 'top');
+      expect(stack.firstElementChild).toBe(movedCamera);
+      await waitFor(() => {
+        expect(localStorage.setItem).toHaveBeenCalledWith(
+          'printerAttachedCameraPositions',
+          JSON.stringify({ 1: 'top' }),
+        );
+      });
+    });
+
+    it('restores attached camera positions from the saved UI preference', async () => {
+      vi.mocked(localStorage.getItem).mockImplementation((key) => (
+        key === 'printerAttachedCameraPositions' ? JSON.stringify({ 1: 'top' }) : null
+      ));
+
+      render(<PrintersPage />);
+
+      const stack = await screen.findByTestId('printer-card-stack-1');
+      const camera = await screen.findByTestId('attached-camera-1');
+      expect(camera).toHaveAttribute('data-position', 'top');
+      expect(stack.firstElementChild).toBe(camera);
     });
   });
 

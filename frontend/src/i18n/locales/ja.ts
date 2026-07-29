@@ -194,6 +194,16 @@ export default {
       large: '大',
       extraLarge: '特大',
     },
+    attachedCamera: {
+      printerOptions: 'プリンターオプション',
+      label: 'カードのカメラ',
+      off: '非表示',
+      top: '上',
+      bottom: '下',
+      moveTop: 'カメラをカードの上へ移動',
+      moveBottom: 'カメラをカードの下へ移動',
+      detach: 'カードのカメラを非表示',
+    },
     pageView: {
       openCamWallPage: 'カメラウォールをページとして開く',
       cards: 'カード',

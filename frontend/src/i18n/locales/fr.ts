@@ -195,6 +195,16 @@ export default {
       large: 'Grandes cartes',
       extraLarge: 'Très grandes cartes',
     },
+    attachedCamera: {
+      printerOptions: 'Options de l’imprimante',
+      label: 'Caméra sur la carte',
+      off: 'Masquée',
+      top: 'En haut',
+      bottom: 'En bas',
+      moveTop: 'Placer la caméra au-dessus de la carte',
+      moveBottom: 'Placer la caméra sous la carte',
+      detach: 'Masquer la caméra de la carte',
+    },
     pageView: {
       openCamWallPage: 'Ouvrir le mur de caméras en pleine page',
       cards: 'Cartes',

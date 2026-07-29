@@ -182,6 +182,16 @@ export default {
       large: '큰 카드',
       extraLarge: '아주 큰 카드'
     },
+    attachedCamera: {
+      printerOptions: '프린터 옵션',
+      label: '카드 카메라',
+      off: '숨김',
+      top: '위',
+      bottom: '아래',
+      moveTop: '카메라를 카드 위로 이동',
+      moveBottom: '카메라를 카드 아래로 이동',
+      detach: '카드 카메라 숨기기',
+    },
     pageView: {
       openCamWallPage: '카메라 월을 페이지로 열기',
       cards: '카드',

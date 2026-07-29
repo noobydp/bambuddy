@@ -195,6 +195,16 @@ export default {
       large: 'Büyük kartlar',
       extraLarge: 'Çok büyük kartlar',
     },
+    attachedCamera: {
+      printerOptions: 'Yazıcı seçenekleri',
+      label: 'Kart kamerası',
+      off: 'Gizli',
+      top: 'Üstte',
+      bottom: 'Altta',
+      moveTop: 'Kamerayı kartın üstüne taşı',
+      moveBottom: 'Kamerayı kartın altına taşı',
+      detach: 'Kart kamerasını gizle',
+    },
     pageView: {
       openCamWallPage: 'Kamera duvarını sayfa olarak aç',
       cards: 'Kartlar',

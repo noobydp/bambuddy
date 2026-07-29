@@ -99,6 +99,7 @@ import { BulkPrinterToolbar, type PrinterState } from '../components/BulkPrinter
 import { FileManagerModal } from '../components/FileManagerModal';
 import { EmbeddedCameraViewer } from '../components/EmbeddedCameraViewer';
 import { CameraWall } from '../components/CameraWall';
+import { CameraTile } from '../components/CameraTile';
 import { MQTTDebugModal } from '../components/MQTTDebugModal';
 import { HMSErrorModal, filterKnownHMSErrors } from '../components/HMSErrorModal';
 import { PrinterQueueWidget } from '../components/PrinterQueueWidget';
@@ -1128,6 +1129,31 @@ function StatusSummaryBar({ printers }: { printers: Printer[] | undefined }) {
 
 type SortOption = 'name' | 'status' | 'model' | 'location' | 'eta';
 type ViewMode = 'expanded' | 'compact';
+type AttachedCameraPosition = 'top' | 'bottom';
+
+const ATTACHED_CAMERA_STORAGE_KEY = 'printerAttachedCameraPositions';
+
+function loadAttachedCameraPositions(): Record<number, AttachedCameraPosition> {
+  try {
+    const saved = localStorage.getItem(ATTACHED_CAMERA_STORAGE_KEY);
+    if (!saved) return {};
+    const parsed = JSON.parse(saved) as Record<string, unknown>;
+    const positions: Record<number, AttachedCameraPosition> = {};
+    for (const [printerId, value] of Object.entries(parsed)) {
+      const numericId = Number(printerId);
+      if (
+        Number.isInteger(numericId)
+        && numericId > 0
+        && (value === 'top' || value === 'bottom')
+      ) {
+        positions[numericId] = value;
+      }
+    }
+    return positions;
+  } catch {
+    return {};
+  }
+}
 
 type ToolbarDropdownOption<T extends string> = {
   value: T;
@@ -1786,6 +1812,83 @@ const DRYING_PRESETS: Record<string, { n3f: number; n3s: number; n3f_hours: numb
   'PVA':   { n3f: 65, n3s: 85, n3f_hours: 12, n3s_hours: 18 },
 };
 
+function AttachedPrinterCamera({
+  printer,
+  status,
+  position,
+  onPositionChange,
+  onOpen,
+}: {
+  printer: Printer;
+  status: PrinterStatus | undefined;
+  position: AttachedCameraPosition;
+  onPositionChange: (position: AttachedCameraPosition | null) => void;
+  onOpen: () => void;
+}) {
+  const { t } = useTranslation();
+  const connected = status?.connected === true;
+  const oppositePosition: AttachedCameraPosition = position === 'top' ? 'bottom' : 'top';
+
+  return (
+    <section
+      data-testid={`attached-camera-${printer.id}`}
+      data-position={position}
+      className="overflow-hidden rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary shadow-sm"
+    >
+      <div className="flex h-9 items-center justify-between border-b border-bambu-dark-tertiary bg-bambu-dark px-2.5">
+        <div className="flex min-w-0 items-center gap-2 text-sm text-white">
+          <Video className="h-3.5 w-3.5 shrink-0 text-bambu-gray" />
+          <span className="truncate">{printer.name}</span>
+        </div>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => onPositionChange(oppositePosition)}
+            className="rounded p-1 text-bambu-gray transition-colors hover:bg-bambu-dark-tertiary hover:text-white"
+            title={
+              position === 'top'
+                ? t('printers.attachedCamera.moveBottom')
+                : t('printers.attachedCamera.moveTop')
+            }
+            aria-label={
+              position === 'top'
+                ? t('printers.attachedCamera.moveBottom')
+                : t('printers.attachedCamera.moveTop')
+            }
+          >
+            {position === 'top' ? (
+              <ArrowDown className="h-3.5 w-3.5" />
+            ) : (
+              <ArrowUp className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => onPositionChange(null)}
+            className="rounded p-1 text-bambu-gray transition-colors hover:bg-red-500/20 hover:text-red-400"
+            title={t('printers.attachedCamera.detach')}
+            aria-label={t('printers.attachedCamera.detach')}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+      <CameraTile
+        printerId={printer.id}
+        printerName={printer.name}
+        cameraRotation={printer.camera_rotation ?? 0}
+        mode={connected ? 'live' : 'paused'}
+        snapshotIntervalMs={8000}
+        connected={connected}
+        onClick={connected ? onOpen : undefined}
+        showName={false}
+        showModeIndicator={false}
+        className="!rounded-none !border-0"
+      />
+    </section>
+  );
+}
+
 function PrinterCard({
   printer,
   hideIfDisconnected,
@@ -1817,6 +1920,8 @@ function PrinterCard({
   bedTempPresets = BED_TEMP_DEFAULTS,
   chamberTempPresets = CHAMBER_TEMP_DEFAULTS,
   fanSpeedPresets = FAN_SPEED_DEFAULTS,
+  attachedCameraPosition,
+  onAttachedCameraPositionChange,
 }: {
   printer: Printer;
   hideIfDisconnected?: boolean;
@@ -1855,6 +1960,8 @@ function PrinterCard({
   bedTempPresets?: readonly [number, number, number];
   chamberTempPresets?: readonly [number, number, number];
   fanSpeedPresets?: readonly [number, number, number];
+  attachedCameraPosition?: AttachedCameraPosition;
+  onAttachedCameraPositionChange?: (position: AttachedCameraPosition | null) => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -3101,6 +3208,33 @@ function PrinterCard({
 
   const footerActionButtonClass = '!h-8 !min-h-8 !px-2 !py-0';
   const footerIconButtonClass = '!h-8 !min-h-8 !w-8 !px-0 !py-0';
+  const handleOpenCamera = () => {
+    if (cameraViewMode === 'embedded' && onOpenEmbeddedCamera) {
+      onOpenEmbeddedCamera(printer.id, printer.name);
+      return;
+    }
+
+    let windowState: { width: number; height: number; left?: number; top?: number } = {
+      width: 640,
+      height: 400,
+    };
+    try {
+      const saved = localStorage.getItem('cameraWindowState');
+      if (saved) windowState = { ...windowState, ...JSON.parse(saved) };
+    } catch {
+      // Keep the safe defaults when an old preference is malformed.
+    }
+    const features = [
+      `width=${windowState.width}`,
+      `height=${windowState.height}`,
+      windowState.left !== undefined ? `left=${windowState.left}` : '',
+      windowState.top !== undefined ? `top=${windowState.top}` : '',
+      // No `noopener`: same-origin popup needs opener so the browser copies
+      // sessionStorage (auth token) into the new window.
+      'menubar=no,toolbar=no,location=no,status=no',
+    ].filter(Boolean).join(',');
+    window.open(`/camera/${printer.id}`, `camera-${printer.id}`, features);
+  };
   const renderAmsSlotActions = ({
     amsId,
     slotId,
@@ -3182,6 +3316,7 @@ function PrinterCard({
         size="sm"
         onClick={() => setShowMenu(!showMenu)}
         title={t('common.more', 'More')}
+        aria-label={t('printers.attachedCamera.printerOptions')}
         className={footerIconButtonClass}
       >
         <MoreVertical className="w-4 h-4" />
@@ -3214,6 +3349,46 @@ function PrinterCard({
             <Info className="w-4 h-4" />
             {t('printers.printerInformation')}
           </button>
+          {onAttachedCameraPositionChange && (
+            <div className="border-y border-bambu-dark-tertiary px-3 py-2">
+              <div className="mb-1.5 flex items-center gap-2 text-xs text-bambu-gray">
+                <Video className="h-3.5 w-3.5" />
+                <span>{t('printers.attachedCamera.label')}</span>
+              </div>
+              <div className="grid grid-cols-3 overflow-hidden rounded-md border border-bambu-dark-tertiary">
+                {([
+                  [null, t('printers.attachedCamera.off')],
+                  ['top', t('printers.attachedCamera.top')],
+                  ['bottom', t('printers.attachedCamera.bottom')],
+                ] as const).map(([position, label]) => {
+                  const selected = (attachedCameraPosition ?? null) === position;
+                  const disabled = position !== null && (
+                    !hasPermission('camera:view') || !capabilities.can_stream_camera
+                  );
+                  return (
+                    <button
+                      key={position ?? 'off'}
+                      type="button"
+                      disabled={disabled}
+                      aria-pressed={selected}
+                      onClick={() => {
+                        if (disabled) return;
+                        onAttachedCameraPositionChange(position);
+                        setShowMenu(false);
+                      }}
+                      className={`px-1 py-1.5 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                        selected
+                          ? 'bg-bambu-green text-white'
+                          : 'bg-bambu-dark text-bambu-gray hover:bg-bambu-dark-tertiary hover:text-white'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {/* Maintenance Mode toggle (#1476) — leverages backend is_active flag */}
           <button
             className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
@@ -3313,16 +3488,37 @@ function PrinterCard({
     </div>
   );
 
+  const attachedCamera = attachedCameraPosition
+    && onAttachedCameraPositionChange
+    && hasPermission('camera:view')
+    && capabilities.can_stream_camera
+    ? (
+        <AttachedPrinterCamera
+          printer={printer}
+          status={status}
+          position={attachedCameraPosition}
+          onPositionChange={onAttachedCameraPositionChange}
+          onOpen={handleOpenCamera}
+        />
+      )
+    : null;
+
   return (
-    <Card
+    <div
       id={`printer-card-${printer.id}`}
-      className={`relative flex h-full flex-col ${isSelected ? 'ring-2 ring-bambu-green' : ''} ${selectionMode || viewMode === 'compact' ? 'cursor-pointer' : ''}`}
-      onClick={handleCardClick}
-      onDragEnter={handleCardDragEnter}
-      onDragOver={handleCardDragOver}
-      onDragLeave={handleCardDragLeave}
-      onDrop={handleCardDrop}
+      data-testid={`printer-card-stack-${printer.id}`}
+      className="flex min-w-0 flex-col gap-2 self-start"
     >
+      {attachedCameraPosition === 'top' && attachedCamera}
+      <Card
+        id={`printer-card-panel-${printer.id}`}
+        className={`relative flex h-full flex-col ${isSelected ? 'ring-2 ring-bambu-green' : ''} ${selectionMode || viewMode === 'compact' ? 'cursor-pointer' : ''}`}
+        onClick={handleCardClick}
+        onDragEnter={handleCardDragEnter}
+        onDragOver={handleCardDragOver}
+        onDragLeave={handleCardDragLeave}
+        onDrop={handleCardDrop}
+      >
       {/* Selection mode click overlay — captures all clicks, preventing nested interactions */}
       {selectionMode && (
         <div
@@ -6040,25 +6236,7 @@ function PrinterCard({
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => {
-                    if (cameraViewMode === 'embedded' && onOpenEmbeddedCamera) {
-                      onOpenEmbeddedCamera(printer.id, printer.name);
-                    } else {
-                      // Use saved window state or defaults
-                      const saved = localStorage.getItem('cameraWindowState');
-                      const state = saved ? JSON.parse(saved) : { width: 640, height: 400 };
-                      const features = [
-                        `width=${state.width}`,
-                        `height=${state.height}`,
-                        state.left !== undefined ? `left=${state.left}` : '',
-                        state.top !== undefined ? `top=${state.top}` : '',
-                        // No `noopener`: same-origin popup needs opener so the browser
-                        // copies sessionStorage (auth token) into the new window.
-                        'menubar=no,toolbar=no,location=no,status=no',
-                      ].filter(Boolean).join(',');
-                      window.open(`/camera/${printer.id}`, `camera-${printer.id}`, features);
-                    }
-                  }}
+                  onClick={handleOpenCamera}
                   disabled={!status?.connected || !hasPermission('camera:view') || !capabilities.can_stream_camera}
                   title={!hasPermission('camera:view') ? t('printers.permission.noCamera') : (cameraViewMode === 'embedded' ? t('printers.openCameraOverlay') : t('printers.openCameraWindow'))}
                   className={footerIconButtonClass}
@@ -6875,7 +7053,9 @@ function PrinterCard({
           </>
         );
       })()}
-    </Card>
+      </Card>
+      {attachedCameraPosition === 'bottom' && attachedCamera}
+    </div>
   );
 }
 
@@ -8550,6 +8730,34 @@ export function PrintersPage() {
     const saved = localStorage.getItem('printerCardSize');
     return saved ? parseInt(saved, 10) : 2; // Default to medium
   });
+  const [attachedCameraPositions, setAttachedCameraPositions] = useState<
+    Record<number, AttachedCameraPosition>
+  >(loadAttachedCameraPositions);
+  useEffect(() => {
+    if (Object.keys(attachedCameraPositions).length === 0) {
+      localStorage.removeItem(ATTACHED_CAMERA_STORAGE_KEY);
+    } else {
+      localStorage.setItem(
+        ATTACHED_CAMERA_STORAGE_KEY,
+        JSON.stringify(attachedCameraPositions),
+      );
+    }
+  }, [attachedCameraPositions]);
+  const setAttachedCameraPosition = useCallback((
+    printerId: number,
+    position: AttachedCameraPosition | null,
+  ) => {
+    setAttachedCameraPositions((current) => {
+      if (position === null) {
+        if (!(printerId in current)) return current;
+        const next = { ...current };
+        delete next[printerId];
+        return next;
+      }
+      if (current[printerId] === position) return current;
+      return { ...current, [printerId]: position };
+    });
+  }, []);
   // Page view: 'cards' = printer cards (default), 'camwall' = grid of live camera tiles
   const [pageView, setPageView] = useState<'cards' | 'camwall'>(() => {
     return localStorage.getItem('printerPageView') === 'camwall' ? 'camwall' : 'cards';
@@ -9681,6 +9889,10 @@ export function PrintersPage() {
                       isSelected={selectedPrinterIds.has(printer.id)}
                       onToggleSelect={toggleSelect}
                       onOpenCompactCard={openCompactCard}
+                      attachedCameraPosition={attachedCameraPositions[printer.id]}
+                      onAttachedCameraPositionChange={(position) => {
+                        setAttachedCameraPosition(printer.id, position);
+                      }}
                     />
                   ))}
                 </div>
@@ -9730,6 +9942,10 @@ export function PrintersPage() {
               isSelected={selectedPrinterIds.has(printer.id)}
               onToggleSelect={toggleSelect}
               onOpenCompactCard={openCompactCard}
+              attachedCameraPosition={attachedCameraPositions[printer.id]}
+              onAttachedCameraPositionChange={(position) => {
+                setAttachedCameraPosition(printer.id, position);
+              }}
             />
           ))}
         </div>
