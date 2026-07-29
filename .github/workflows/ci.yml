@@ -127,18 +127,18 @@ jobs:
         timeout-minutes: 10
         run: |
           cd backend
-          # -v dropped: 5300+ "PASSED foo::bar" lines per worker eat 30-60s
+          # -v dropped: 7400+ "PASSED foo::bar" lines per run eat 30-60s
           # of stdout I/O time on 2-vCPU runners. --tb=short is enough.
-          # --splits 4 --group N uses pytest-split to slice the collected
-          # test set roughly evenly across the 4 matrix shards; first run
-          # is name-hash-based, subsequent runs improve via .test_durations
-          # if you ever commit one (we don't — even the naive hash split
-          # gets us ≈25% per shard given the test mix here).
+          # The committed timing profile plus least-duration allocation keeps
+          # slow integration tests spread across all four shards. Equal test
+          # counts alone left shard 1 running about 5x longer than shard 4.
           python -m pytest tests/ \
             --tb=short \
             --timeout=60 --timeout-method=thread \
             -n auto \
-            --splits 4 --group ${{ matrix.shard }}
+            --splits 4 --group ${{ matrix.shard }} \
+            --durations-path .test_durations \
+            --splitting-algorithm least_duration
 
   # ============================================================================
   # Frontend Checks
@@ -368,7 +368,9 @@ jobs:
               --timeout=60 --timeout-method=thread \
               -p no:cacheprovider \
               -n auto \
-              --splits 4 --group ${{ matrix.shard }}
+              --splits 4 --group ${{ matrix.shard }} \
+              --durations-path backend/.test_durations \
+              --splitting-algorithm least_duration
 
   docker-test:
     name: Docker Build
@@ -421,12 +423,10 @@ jobs:
           echo "Static files HTTP status: $STATUS"
           [ "$STATUS" = "200" ]
 
-      # Test 5: Integration Test Suite (pytest)
-      - name: Build integration test runner
-        run: docker compose -f docker-compose.test.yml build integration-test-runner
-
-      - name: Run integration test suite
-        run: docker compose -f docker-compose.test.yml run --rm integration-test-runner
+      # backend/tests/integration is already included in every full native and
+      # Docker-sharded backend run above. The former integration-test-runner
+      # repeated those in-process tests here without using the live container,
+      # adding about nine minutes without providing additional coverage.
 
       - name: Show logs on failure
         if: failure()

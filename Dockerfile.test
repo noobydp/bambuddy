@@ -44,7 +44,7 @@ ENV TESTING=1
 HEALTHCHECK NONE
 
 # Default command runs pytest (excluding docker integration tests).
-# -v dropped: 5300+ "PASSED foo::bar" lines per worker eat noticeable
+# -v dropped: 7400+ "PASSED foo::bar" lines per run eat noticeable
 # stdout I/O time and clutter test_docker.sh output. --tb=short still
 # gives full failure tracebacks when something breaks.
 # -n auto adapts to the host's vCPU count instead of hard-coding 30 —

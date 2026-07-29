@@ -145,7 +145,7 @@ if [ "$RUN_FRONTEND" = true ]; then
     IMAGES_TO_BUILD="$IMAGES_TO_BUILD frontend-test"
 fi
 if [ "$RUN_INTEGRATION" = true ]; then
-    IMAGES_TO_BUILD="$IMAGES_TO_BUILD integration integration-test-runner"
+    IMAGES_TO_BUILD="$IMAGES_TO_BUILD integration"
 fi
 
 if [ -n "$IMAGES_TO_BUILD" ]; then
@@ -213,10 +213,10 @@ if [ "$RUN_FRONTEND" = true ]; then
 fi
 
 # ============================================
-# Test 4: Integration Tests
+# Test 4: Container Integration Smoke Tests
 # ============================================
 if [ "$RUN_INTEGRATION" = true ]; then
-    print_header "Test 4: Integration Tests"
+    print_header "Test 4: Container Integration Smoke Tests"
     print_info "Starting application container..."
 
     # Start the integration container
@@ -240,7 +240,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
         print_success "Application is healthy"
 
         # Run basic health checks
-        print_info "Running integration tests..."
+        print_info "Running container smoke tests..."
 
         # Test health endpoint
         HEALTH_RESPONSE=$(sudo docker compose -f docker-compose.test.yml exec -T integration curl -s http://localhost:${PORT}/health)
@@ -267,12 +267,8 @@ if [ "$RUN_INTEGRATION" = true ]; then
             print_failure "Static files not served (HTTP $STATIC_RESPONSE)"
         fi
 
-        # Run pytest integration tests if they exist
-        if sudo docker compose -f docker-compose.test.yml run --rm integration-test-runner 2>/dev/null; then
-            print_success "Integration test suite passed"
-        else
-            print_info "No Docker-specific integration tests found (this is OK)"
-        fi
+        # The backend test phase already includes backend/tests/integration.
+        # These checks intentionally exercise the built, running container.
     fi
 
     # Cleanup integration containers
