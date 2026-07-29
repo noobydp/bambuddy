@@ -1,11 +1,12 @@
-"""Camera streaming API endpoints for Bambu Lab printers."""
+"""Camera streaming API endpoints for supported printer providers."""
 
 import asyncio
 import logging
 import os
 import subprocess
 import sys
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Callable
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -37,6 +38,7 @@ from backend.app.services.camera import (
 )
 from backend.app.services.camera_fanout import (
     MjpegBroadcaster,
+    active_broadcaster_keys,
     get_or_create_broadcaster,
     get_subscriber_count,
     iter_subscriber,
@@ -105,20 +107,124 @@ def _format_mjpeg_frame(frame: bytes) -> bytes:
     )
 
 
-async def _generate_flashforge_polling_stream(
-    printer_id: int, ip_address: str, fps: int
-) -> AsyncGenerator[bytes, None]:
-    """Generate a browser-friendly MJPEG stream from FlashForge's flaky stream endpoint."""
-    import time
+def _record_camera_frame(printer_id: int, frame: bytes) -> bytes:
+    """Store a camera frame for snapshots/status and format it for viewers."""
+    now = time.time()
+    _last_frames[printer_id] = frame
+    _last_frame_times[printer_id] = now
+    return _format_mjpeg_frame(frame)
 
-    frame_interval = 1.0 / max(fps, 1)
-    while True:
-        frame = await read_flashforge_mjpeg_frame(ip_address, timeout=8.0)
-        if frame:
-            _last_frames[printer_id] = frame
-            _last_frame_times[printer_id] = time.time()
-            yield _format_mjpeg_frame(frame)
-        await asyncio.sleep(frame_interval)
+
+class _MjpegStreamUnavailable(Exception):
+    """Raised when no candidate URL produces an MJPEG frame."""
+
+
+async def _generate_persistent_mjpeg_stream(
+    printer_id: int,
+    urls: list[str],
+    fps: int,
+    disconnect_event: asyncio.Event,
+    headers: dict[str, str] | None = None,
+) -> AsyncGenerator[bytes, None]:
+    """Read MJPEG continuously and reconnect without reopening it per frame.
+
+    JPEG markers are used instead of trusting multipart boundaries because
+    several printer camera servers emit incomplete or inconsistent headers.
+    """
+    frame_interval = 1.0 / max(1, min(fps, 30))
+    preferred_url: str | None = None
+    ever_received_frame = False
+    reconnect_delay = 0.25
+    last_emitted = 0.0
+
+    async with httpx.AsyncClient(headers=headers or {}, timeout=httpx.Timeout(10.0)) as client:
+        while not disconnect_event.is_set():
+            candidates = [preferred_url] if preferred_url else urls
+            connected_this_cycle = False
+
+            for candidate in candidates:
+                if disconnect_event.is_set():
+                    return
+                buffer = bytearray()
+                candidate_received_frame = False
+                try:
+                    async with client.stream("GET", candidate) as response:
+                        response.raise_for_status()
+                        async for chunk in response.aiter_bytes():
+                            if disconnect_event.is_set():
+                                return
+                            if not chunk:
+                                continue
+                            buffer.extend(chunk)
+                            while True:
+                                start = buffer.find(b"\xff\xd8")
+                                if start < 0:
+                                    if len(buffer) > 1:
+                                        del buffer[:-1]
+                                    break
+                                end = buffer.find(b"\xff\xd9", start + 2)
+                                if end < 0:
+                                    if start:
+                                        del buffer[:start]
+                                    if len(buffer) > 16 * 1024 * 1024:
+                                        buffer.clear()
+                                    break
+
+                                frame = bytes(buffer[start : end + 2])
+                                del buffer[: end + 2]
+                                candidate_received_frame = True
+                                ever_received_frame = True
+                                connected_this_cycle = True
+                                preferred_url = candidate
+                                reconnect_delay = 0.25
+
+                                # Always keep the snapshot buffer current, even
+                                # when this frame is skipped by the viewer limit.
+                                _last_frames[printer_id] = frame
+                                _last_frame_times[printer_id] = time.time()
+                                now = time.monotonic()
+                                if now - last_emitted >= frame_interval:
+                                    last_emitted = now
+                                    yield _format_mjpeg_frame(frame)
+                except (httpx.HTTPError, ValueError) as exc:
+                    logger.debug("MJPEG source %s failed for printer %s: %s", candidate, printer_id, exc)
+
+                if candidate_received_frame:
+                    break
+
+            if not ever_received_frame and not connected_this_cycle:
+                raise _MjpegStreamUnavailable
+
+            preferred_url = preferred_url if connected_this_cycle else None
+            try:
+                await asyncio.wait_for(disconnect_event.wait(), timeout=reconnect_delay)
+            except TimeoutError:
+                reconnect_delay = min(reconnect_delay * 2, 5.0)
+
+
+async def _generate_flashforge_mjpeg_stream(
+    printer_id: int,
+    ip_address: str,
+    fps: int,
+    disconnect_event: asyncio.Event,
+) -> AsyncGenerator[bytes, None]:
+    """Fan out FlashForge's native MJPEG connection at its live cadence."""
+    url = f"http://{ip_address}:8080/?action=stream"
+    while not disconnect_event.is_set():
+        try:
+            async for frame in _generate_persistent_mjpeg_stream(
+                printer_id,
+                [url],
+                fps,
+                disconnect_event,
+            ):
+                yield frame
+        except _MjpegStreamUnavailable:
+            logger.debug("FlashForge camera unavailable for printer %s; retrying", printer_id)
+            try:
+                await asyncio.wait_for(disconnect_event.wait(), timeout=1.0)
+            except TimeoutError:
+                pass
 
 
 async def _moonraker_webcam(printer: Printer) -> dict | None:
@@ -158,12 +264,14 @@ async def _generate_moonraker_polling_stream(
     printer: Printer,
     snapshot_urls: list[str],
     fps: int,
+    disconnect_event: asyncio.Event | None = None,
 ) -> AsyncGenerator[bytes, None]:
+    disconnect_event = disconnect_event or asyncio.Event()
     headers = {"X-Api-Key": printer.access_code} if printer.access_code else {}
     frame_interval = 1.0 / max(1, min(fps, 10))
     preferred_url: str | None = None
     async with httpx.AsyncClient(headers=headers, timeout=10) as client:
-        while True:
+        while not disconnect_event.is_set():
             candidates = [preferred_url] if preferred_url else snapshot_urls
             frame = None
             for candidate in candidates:
@@ -177,12 +285,68 @@ async def _generate_moonraker_polling_stream(
                 except httpx.HTTPError:
                     continue
             if frame:
-                _last_frames[printer_id] = frame
-                yield _format_mjpeg_frame(frame)
+                yield _record_camera_frame(printer_id, frame)
             else:
                 preferred_url = None
                 logger.debug("Moonraker webcam snapshot failed for printer %s", printer_id)
-            await asyncio.sleep(frame_interval)
+            try:
+                await asyncio.wait_for(disconnect_event.wait(), timeout=frame_interval)
+            except TimeoutError:
+                pass
+
+
+def _moonraker_supports_native_mjpeg(webcam: dict) -> bool:
+    """Return whether a Moonraker webcam advertises an HTTP MJPEG stream."""
+    service = str(webcam.get("service") or "").lower()
+    stream_url = str(webcam.get("stream_url") or "").lower()
+    snapshot_url = str(webcam.get("snapshot_url") or "").lower()
+    if not stream_url or stream_url == snapshot_url or "snapshot" in stream_url:
+        return False
+    if any(protocol in stream_url for protocol in ("webrtc", "rtsp://", ".m3u8")):
+        return False
+    return "mjpeg" in service or "stream" in stream_url
+
+
+async def _generate_moonraker_camera_stream(
+    printer_id: int,
+    printer: Printer,
+    webcam: dict,
+    stream_urls: list[str],
+    snapshot_urls: list[str],
+    fps: int,
+    disconnect_event: asyncio.Event,
+) -> AsyncGenerator[bytes, None]:
+    """Prefer Moonraker's native MJPEG stream and fall back to snapshots."""
+    headers = {"X-Api-Key": printer.access_code} if printer.access_code else {}
+    if stream_urls and _moonraker_supports_native_mjpeg(webcam):
+        try:
+            async for frame in _generate_persistent_mjpeg_stream(
+                printer_id,
+                stream_urls,
+                fps,
+                disconnect_event,
+                headers,
+            ):
+                yield frame
+            return
+        except _MjpegStreamUnavailable:
+            logger.info(
+                "Moonraker native webcam stream unavailable for printer %s; using snapshots",
+                printer_id,
+            )
+
+    if not snapshot_urls:
+        logger.warning("Moonraker camera for printer %s has no snapshot fallback", printer_id)
+        return
+
+    async for frame in _generate_moonraker_polling_stream(
+        printer_id,
+        printer,
+        snapshot_urls,
+        fps,
+        disconnect_event,
+    ):
+        yield frame
 
 
 def is_stream_active(printer_id: int) -> bool:
@@ -199,8 +363,10 @@ def is_stream_active(printer_id: int) -> bool:
     returns None (the stream may be running but the first frame hasn't landed
     in the buffer yet, or the upstream is mid-reconnect).
     """
-    return any(k.startswith(f"{printer_id}-") for k in _active_streams) or any(
-        k.startswith(f"{printer_id}-") for k in _active_chamber_streams
+    return (
+        f"printer-{printer_id}" in active_broadcaster_keys()
+        or any(k.startswith(f"{printer_id}-") for k in _active_streams)
+        or any(k.startswith(f"{printer_id}-") for k in _active_chamber_streams)
     )
 
 
@@ -223,6 +389,32 @@ def try_get_active_buffered_frame(printer_id: int) -> bytes | None:
     if not is_stream_active(printer_id):
         return None
     return _last_frames.get(printer_id)
+
+
+async def _snapshot_from_active_stream(printer_id: int) -> Response | None:
+    """Reuse a shared live stream instead of opening a competing connection."""
+    if not is_stream_active(printer_id):
+        return None
+
+    # A broadcaster becomes active just before its first upstream frame lands.
+    # Briefly wait through that startup window instead of opening another socket.
+    for _ in range(20):
+        frame = _last_frames.get(printer_id)
+        if frame:
+            return Response(
+                content=frame,
+                media_type="image/jpeg",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Content-Disposition": f'inline; filename="snapshot_{printer_id}.jpg"',
+                },
+            )
+        await asyncio.sleep(0.1)
+
+    raise HTTPException(
+        status_code=503,
+        detail="Camera stream is connected but has not produced a frame yet.",
+    )
 
 
 async def get_printer_or_404(printer_id: int, db: AsyncSession) -> Printer:
@@ -717,6 +909,55 @@ async def create_stream_token(
     return {"token": await create_camera_stream_token()}
 
 
+async def _fanout_stream_response(
+    printer_id: int,
+    request: Request,
+    factory: Callable[[asyncio.Event], AsyncGenerator[bytes, None]],
+) -> StreamingResponse:
+    """Attach a viewer to the provider-neutral shared camera broadcaster."""
+    fanout_key = f"printer-{printer_id}"
+    broadcaster: MjpegBroadcaster = await get_or_create_broadcaster(fanout_key, factory)
+    try:
+        queue = await broadcaster.subscribe()
+    except RuntimeError:
+        broadcaster = await get_or_create_broadcaster(fanout_key, factory)
+        queue = await broadcaster.subscribe()
+
+    logger.info(
+        "Camera viewer attached to %s (subscribers=%d)",
+        fanout_key,
+        broadcaster.subscriber_count,
+    )
+
+    async def _is_disconnected() -> bool:
+        try:
+            return await request.is_disconnected()
+        except Exception:
+            return True
+
+    def _log_detach(remaining: int) -> None:
+        logger.info("Camera viewer detached from %s (subscribers=%d)", fanout_key, remaining)
+
+    async def _generate():
+        async for chunk in iter_subscriber(
+            broadcaster,
+            queue,
+            is_disconnected=_is_disconnected,
+            on_unsubscribe=_log_detach,
+        ):
+            yield chunk
+
+    return StreamingResponse(
+        _generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
 @router.get("/{printer_id}/camera/stream")
 async def camera_stream(
     printer_id: int,
@@ -732,6 +973,8 @@ async def camera_stream(
     Requires a stream token query param (?token=xxx) when auth is enabled.
 
     Uses external camera if configured, otherwise uses built-in camera:
+    - FlashForge: Native HTTP MJPEG stream
+    - Klipper: Moonraker MJPEG stream or shared snapshot fallback
     - External: MJPEG, RTSP, or HTTP snapshot
     - A1/P1: Chamber image protocol (port 6000)
     - X1/H2/P2: RTSP via ffmpeg (port 322)
@@ -760,53 +1003,55 @@ async def camera_stream(
     if provider_for_printer(printer) == PROVIDER_KLIPPER:
         webcam = await _moonraker_webcam(printer)
         snapshot_urls = _moonraker_camera_urls(printer, webcam or {}, "snapshot_url")
-        if not webcam or not snapshot_urls:
-            raise HTTPException(404, "Moonraker did not expose a usable webcam snapshot URL")
-        fps = min(max(fps, 1), 10)
-        _active_external_streams.add(printer_id)
+        stream_urls = _moonraker_camera_urls(printer, webcam or {}, "stream_url")
+        if not webcam or not (snapshot_urls or stream_urls):
+            raise HTTPException(404, "Moonraker did not expose a usable webcam URL")
+        fps = min(max(fps, 1), 30)
+        _stream_start_times.setdefault(printer_id, time.time())
 
-        async def moonraker_stream_wrapper():
+        async def moonraker_stream_wrapper(disconnect_event: asyncio.Event):
+            _active_external_streams.add(printer_id)
             try:
-                async for frame in _generate_moonraker_polling_stream(
+                async for frame in _generate_moonraker_camera_stream(
                     printer_id,
                     printer,
+                    webcam,
+                    stream_urls,
                     snapshot_urls,
                     fps,
+                    disconnect_event,
                 ):
                     yield frame
             finally:
                 _active_external_streams.discard(printer_id)
+                _last_frames.pop(printer_id, None)
+                _last_frame_times.pop(printer_id, None)
+                _stream_start_times.pop(printer_id, None)
 
-        return StreamingResponse(
-            moonraker_stream_wrapper(),
-            media_type="multipart/x-mixed-replace; boundary=frame",
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-        )
+        return await _fanout_stream_response(printer_id, request, moonraker_stream_wrapper)
 
     if is_flashforge_model(printer.model):
-        import time
+        fps = min(max(fps, 1), 30)
+        _stream_start_times.setdefault(printer_id, time.time())
 
-        fps = min(max(fps, 1), 2)
-        _stream_start_times[printer_id] = time.time()
-        _active_external_streams.add(printer_id)
-
-        async def flashforge_stream_wrapper():
+        async def flashforge_stream_wrapper(disconnect_event: asyncio.Event):
+            _active_external_streams.add(printer_id)
             try:
-                async for frame in _generate_flashforge_polling_stream(printer_id, printer.ip_address, fps):
+                async for frame in _generate_flashforge_mjpeg_stream(
+                    printer_id,
+                    printer.ip_address,
+                    fps,
+                    disconnect_event,
+                ):
                     yield frame
             finally:
                 _active_external_streams.discard(printer_id)
+                _last_frames.pop(printer_id, None)
+                _last_frame_times.pop(printer_id, None)
+                _stream_start_times.pop(printer_id, None)
                 logger.info("FlashForge camera stream ended for printer %s", printer_id)
 
-        return StreamingResponse(
-            flashforge_stream_wrapper(),
-            media_type="multipart/x-mixed-replace; boundary=frame",
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
-        )
+        return await _fanout_stream_response(printer_id, request, flashforge_stream_wrapper)
 
     # Check for external camera first
     if printer.external_camera_enabled and printer.external_camera_url:
@@ -920,7 +1165,6 @@ async def camera_stream(
     # Note: the upstream's fps is fixed by the first viewer who creates the
     # broadcaster. Concurrent viewers share that rate; new viewers after
     # teardown create a fresh broadcaster at their requested fps.
-    fanout_key = f"printer-{printer_id}"
     upstream_stream_id = f"{printer_id}-fanout"
 
     def _factory(disconnect_event: asyncio.Event):
@@ -937,52 +1181,7 @@ async def camera_stream(
             printer_id=printer_id,
         )
 
-    # Subscribe with a one-shot retry to close a tiny race: the grace-window
-    # teardown can flip the broadcaster to `stopped=True` between the registry
-    # lookup and our subscribe call. The retry forces the registry to mint a
-    # fresh broadcaster (since the now-stopped one is replaced), and the second
-    # subscribe is guaranteed to land on it before any teardown can fire.
-    broadcaster: MjpegBroadcaster = await get_or_create_broadcaster(fanout_key, _factory)
-    try:
-        queue = await broadcaster.subscribe()
-    except RuntimeError:
-        broadcaster = await get_or_create_broadcaster(fanout_key, _factory)
-        queue = await broadcaster.subscribe()
-    logger.info(
-        "Camera viewer attached to %s (subscribers=%d)",
-        fanout_key,
-        broadcaster.subscriber_count,
-    )
-
-    async def _is_disconnected() -> bool:
-        try:
-            return await request.is_disconnected()
-        except Exception:
-            # Older starlette/uvicorn can raise during teardown — treat that
-            # as "client gone" so the subscriber cleanly unsubscribes.
-            return True
-
-    def _log_detach(remaining: int) -> None:
-        logger.info("Camera viewer detached from %s (subscribers=%d)", fanout_key, remaining)
-
-    async def _generate():
-        async for chunk in iter_subscriber(
-            broadcaster,
-            queue,
-            is_disconnected=_is_disconnected,
-            on_unsubscribe=_log_detach,
-        ):
-            yield chunk
-
-    return StreamingResponse(
-        _generate(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
-    )
+    return await _fanout_stream_response(printer_id, request, _factory)
 
 
 @router.api_route("/{printer_id}/camera/stop", methods=["GET", "POST"])
@@ -1096,6 +1295,9 @@ async def camera_snapshot(
         printer = await get_printer_or_404(printer_id, db)
 
     if provider_for_printer(printer) == PROVIDER_KLIPPER:
+        active_snapshot = await _snapshot_from_active_stream(printer_id)
+        if active_snapshot:
+            return active_snapshot
         webcam = await _moonraker_webcam(printer)
         snapshot_urls = _moonraker_camera_urls(printer, webcam or {}, "snapshot_url")
         if not webcam or not snapshot_urls:
@@ -1120,6 +1322,9 @@ async def camera_snapshot(
         )
 
     if is_flashforge_model(printer.model):
+        active_snapshot = await _snapshot_from_active_stream(printer_id)
+        if active_snapshot:
+            return active_snapshot
         frame_data = await read_flashforge_mjpeg_frame(printer.ip_address, timeout=15.0)
         if not frame_data:
             raise HTTPException(
@@ -1163,16 +1368,9 @@ async def camera_snapshot(
     # watching — avoids opening a second concurrent RTSP socket on printers
     # that allow only one camera connection (e.g. X2D firmware 01.01.00.00;
     # see #1271). Buffered frame is <1s old while a viewer is connected.
-    buffered = try_get_active_buffered_frame(printer_id)
-    if buffered:
-        return Response(
-            content=buffered,
-            media_type="image/jpeg",
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Content-Disposition": f'inline; filename="snapshot_{printer_id}.jpg"',
-            },
-        )
+    active_snapshot = await _snapshot_from_active_stream(printer_id)
+    if active_snapshot:
+        return active_snapshot
 
     # Create temporary file for the snapshot (0600 so only the app user can read it)
     fd, tmp_name = tempfile.mkstemp(suffix=".jpg")
@@ -1281,8 +1479,8 @@ async def camera_status(
     """
     import time
 
-    # Check if there's an active stream for this printer
-    has_active_stream = False
+    # Provider-neutral fan-out covers Bambu, FlashForge, and Moonraker.
+    has_active_stream = is_stream_active(printer_id)
 
     # Check external camera streams
     if printer_id in _active_external_streams:

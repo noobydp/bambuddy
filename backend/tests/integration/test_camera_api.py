@@ -484,22 +484,13 @@ class TestCameraAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_flashforge_polling_stream_updates_camera_status(self, async_client: AsyncClient, printer_factory):
+    async def test_flashforge_stream_frame_updates_camera_status(self, async_client: AsyncClient, printer_factory):
         """FlashForge stream frames must update status bookkeeping for stall detection."""
         from backend.app.api.routes import camera as camera_routes
 
         printer = await printer_factory(model="FlashForge Creator 5 Pro")
         fake_jpeg = b"\xff\xd8\xff\xe0flashforge-stream-frame"
-
-        stream = camera_routes._generate_flashforge_polling_stream(printer.id, printer.ip_address, fps=1)
-        try:
-            with patch(
-                "backend.app.api.routes.camera.read_flashforge_mjpeg_frame",
-                new=AsyncMock(return_value=fake_jpeg),
-            ):
-                frame = await anext(stream)
-        finally:
-            await stream.aclose()
+        frame = camera_routes._record_camera_frame(printer.id, fake_jpeg)
 
         assert frame.startswith(b"--frame\r\nContent-Type: image/jpeg")
         assert camera_routes._last_frames[printer.id] == fake_jpeg

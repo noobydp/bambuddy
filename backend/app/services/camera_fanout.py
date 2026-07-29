@@ -1,9 +1,9 @@
-"""MJPEG fan-out broadcaster for camera streams.
+"""Provider-neutral MJPEG fan-out broadcaster for camera streams.
 
-Most Bambu Lab printers only allow one concurrent camera connection: the
-RTSP socket on X1/H2/P2 models, the chamber-image socket on port 6000 on
-A1/P1 models. Without fan-out, opening a second viewer either fails or
-kicks the first viewer off — see issue #1089.
+Printer cameras commonly allow only one efficient upstream connection. This
+includes Bambu RTSP/chamber-image cameras, FlashForge MJPEG cameras, and
+Moonraker webcam proxies. Without fan-out, opening a second viewer either
+duplicates expensive snapshot polling, fails, or kicks the first viewer off.
 
 This module owns a single upstream connection per printer and pushes each
 frame to N independent subscriber queues. New viewers tap the existing
