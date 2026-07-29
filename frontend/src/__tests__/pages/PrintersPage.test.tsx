@@ -1503,6 +1503,8 @@ describe('Klipper printer controls', () => {
           kinematics: 'corexy',
           klipper_version: 'v0.13.0-689-g2fb3d54e',
           toolchanger_ready: true,
+          web_ui_name: 'Mainsail',
+          web_ui_url: 'http://192.0.2.30/',
         },
         capabilities: {
           can_pause: true,
@@ -1548,6 +1550,10 @@ describe('Klipper printer controls', () => {
     expect(screen.getByText('Z Tilt')).toBeInTheDocument();
     expect(screen.getByText('Homed XY')).toBeInTheDocument();
     await user.click(await screen.findByTitle(/more/i));
+    const webUiLink = screen.getByRole('link', { name: 'Open Mainsail' });
+    expect(webUiLink).toHaveAttribute('href', 'http://192.0.2.30/');
+    expect(webUiLink).toHaveAttribute('target', '_blank');
+    expect(webUiLink).toHaveAttribute('rel', 'noopener noreferrer');
     await user.click(screen.getByRole('button', { name: 'Klipper controls' }));
 
     expect(await screen.findByText('Klipper controls — TinyT')).toBeInTheDocument();

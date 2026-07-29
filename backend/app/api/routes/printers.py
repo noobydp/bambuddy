@@ -1074,6 +1074,7 @@ async def get_klipper_diagnostics(
         "objects": moonraker.get("objects") or [],
         "macros": moonraker.get("macros") or [],
         "webcams": moonraker.get("webcams") or [],
+        "web_ui": moonraker.get("web_ui"),
         "toolchanger_ready": bool(moonraker.get("toolchanger_ready")),
         "device_info": snapshot.get("device_info"),
     }

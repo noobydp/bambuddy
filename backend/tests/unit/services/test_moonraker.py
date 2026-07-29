@@ -8,7 +8,12 @@ import httpx
 import pytest
 
 import backend.app.services.moonraker as moonraker
-from backend.app.services.moonraker import MoonrakerClient, probe_moonraker_connection, stable_moonraker_device_id
+from backend.app.services.moonraker import (
+    MoonrakerClient,
+    probe_klipper_web_ui,
+    probe_moonraker_connection,
+    stable_moonraker_device_id,
+)
 
 FIXTURE_DIR = Path(__file__).parents[2] / "fixtures" / "moonraker"
 
@@ -64,6 +69,79 @@ def test_trident_maps_qgl_single_tool_and_unhomed_state() -> None:
     assert snapshot["device_info"]["build_volume"] == "424 × 416 × 360 mm"
     assert snapshot["device_info"]["remaining_disk_gb"] == 9.5
     assert snapshot["device_info"]["toolchanger_ready"] is None
+
+
+def test_verified_web_ui_is_added_to_provider_snapshot() -> None:
+    client = _client_from_fixture("tinyt")
+    client._web_ui = {"name": "Mainsail", "url": "http://192.0.2.30/"}
+    client._apply_status(_fixture("tinyt")["status"])
+
+    snapshot = client.state.raw_data["provider_snapshot"]
+    assert snapshot["device_info"]["web_ui_name"] == "Mainsail"
+    assert snapshot["device_info"]["web_ui_url"] == "http://192.0.2.30/"
+    assert client.state.raw_data["moonraker"]["web_ui"] == {
+        "name": "Mainsail",
+        "url": "http://192.0.2.30/",
+    }
+
+
+@pytest.mark.asyncio
+async def test_web_ui_probe_accepts_recognized_same_host_page() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text="<html><head><title>Mainsail</title></head></html>",
+        )
+
+    result = await probe_klipper_web_ui(
+        "192.0.2.30",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result == {"name": "Mainsail", "url": "http://192.0.2.30/"}
+
+
+@pytest.mark.asyncio
+async def test_web_ui_probe_uses_https_when_http_is_unavailable() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.scheme == "http":
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/html"},
+            text="<title>Fluidd</title>",
+        )
+
+    result = await probe_klipper_web_ui(
+        "192.0.2.31",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result == {"name": "Fluidd", "url": "https://192.0.2.31/"}
+
+
+@pytest.mark.asyncio
+async def test_web_ui_probe_rejects_generic_page_and_external_redirect() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "192.0.2.30" and request.url.scheme == "http":
+            return httpx.Response(
+                302,
+                request=request,
+                headers={"location": "https://example.com/printer"},
+            )
+        if request.url.host == "example.com":
+            return httpx.Response(200, request=request, text="<title>Mainsail</title>")
+        return httpx.Response(200, request=request, text="<title>Router admin</title>")
+
+    result = await probe_klipper_web_ui(
+        "192.0.2.30",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result is None
 
 
 def test_storage_info_uses_moonraker_directory_disk_usage(monkeypatch: pytest.MonkeyPatch) -> None:

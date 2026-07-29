@@ -3435,16 +3435,32 @@ function PrinterCard({
             {t('printers.forceRefresh')}
           </button>
           {fallbackProvider === 'klipper' ? (
-            <button
-              className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
-              onClick={() => {
-                setShowKlipperPanel(true);
-                setShowMenu(false);
-              }}
-            >
-              <Terminal className="w-4 h-4" />
-              Klipper controls
-            </button>
+            <>
+              {status?.device_info?.web_ui_url && (
+                <a
+                  href={status.device_info.web_ui_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+                  onClick={() => setShowMenu(false)}
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  {t('printers.klipper.openWebUi', 'Open {{name}}', {
+                    name: status.device_info.web_ui_name || 'Klipper UI',
+                  })}
+                </a>
+              )}
+              <button
+                className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+                onClick={() => {
+                  setShowKlipperPanel(true);
+                  setShowMenu(false);
+                }}
+              >
+                <Terminal className="w-4 h-4" />
+                Klipper controls
+              </button>
+            </>
           ) : (
             <button
               className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"

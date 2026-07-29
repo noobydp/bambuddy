@@ -436,6 +436,8 @@ class PrinterDeviceInfo(BaseModel):
     kinematics: str | None = None
     mcu_count: int | None = None
     toolchanger_ready: bool | None = None
+    web_ui_name: str | None = None
+    web_ui_url: str | None = None
 
 
 class PrinterStatus(BaseModel):

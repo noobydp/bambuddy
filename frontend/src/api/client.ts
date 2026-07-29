@@ -722,6 +722,8 @@ export interface PrinterDeviceInfo {
   kinematics?: string | null;
   mcu_count?: number | null;
   toolchanger_ready?: boolean | null;
+  web_ui_name?: string | null;
+  web_ui_url?: string | null;
 }
 
 export interface PrinterCreate {
@@ -774,6 +776,7 @@ export interface KlipperDiagnostics {
   objects: string[];
   macros: string[];
   webcams: Array<Record<string, unknown>>;
+  web_ui?: { name: string; url: string } | null;
   toolchanger_ready: boolean;
   device_info: PrinterDeviceInfo | null;
 }

@@ -36,6 +36,8 @@ MOONRAKER_STALE_AFTER_SECONDS = 45.0
 MOONRAKER_POLL_INTERVAL_SECONDS = 15.0
 MOONRAKER_COMMAND_TIMEOUT_SECONDS = 12.0
 MOONRAKER_CONSOLE_HISTORY_LIMIT = 500
+KLIPPER_WEB_UI_PROBE_TIMEOUT_SECONDS = 3.0
+KLIPPER_WEB_UI_MAX_HTML_BYTES = 64 * 1024
 _RPC_FAILED = object()
 
 _ACTIVE_STATES = {"RUNNING", "PAUSE", "PREPARE"}
@@ -167,6 +169,87 @@ def _deep_merge_status(target: dict[str, dict[str, Any]], update: dict[str, Any]
             target.setdefault(object_name, {}).update(values)
 
 
+def _identify_klipper_web_ui(html: str) -> str | None:
+    """Return a known Klipper web UI name without accepting arbitrary pages."""
+    normalized = html.casefold()
+    if "mainsail" in normalized:
+        return "Mainsail"
+    if "fluidd" in normalized:
+        return "Fluidd"
+    return None
+
+
+async def probe_klipper_web_ui(
+    ip_address: str,
+    *,
+    timeout: float = KLIPPER_WEB_UI_PROBE_TIMEOUT_SECONDS,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, str] | None:
+    """Find a live Mainsail or Fluidd page on the configured Moonraker host.
+
+    Only same-host HTTP(S) responses containing a recognized UI marker are
+    accepted. This prevents a generic web server or an external redirect from
+    becoming a misleading printer-card link.
+    """
+    expected_host = ip_address.strip().strip("[]").casefold()
+    try:
+        # This sends no credentials and must accept self-signed Mainsail TLS on
+        # the same already-configured printer host.
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            max_redirects=3,
+            timeout=timeout,
+            verify=False,  # nosec B501
+            transport=transport,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "Bambuddy Klipper UI probe",
+            },
+        ) as client:
+
+            async def probe_scheme(scheme: str) -> dict[str, str] | None:
+                try:
+                    async with client.stream("GET", f"{scheme}://{ip_address}/") as response:
+                        if response.status_code != 200:
+                            return None
+                        if response.url.scheme not in {"http", "https"}:
+                            return None
+                        if str(response.url.host or "").casefold() != expected_host:
+                            return None
+                        content_type = response.headers.get("content-type", "").casefold()
+                        if content_type and "html" not in content_type:
+                            return None
+
+                        chunks: list[bytes] = []
+                        size = 0
+                        async for chunk in response.aiter_bytes():
+                            remaining = KLIPPER_WEB_UI_MAX_HTML_BYTES - size
+                            if remaining <= 0:
+                                break
+                            chunks.append(chunk[:remaining])
+                            size += min(len(chunk), remaining)
+                            if size >= KLIPPER_WEB_UI_MAX_HTML_BYTES:
+                                break
+                        html = b"".join(chunks).decode("utf-8", errors="replace")
+                        name = _identify_klipper_web_ui(html)
+                        if name:
+                            return {"name": name, "url": str(response.url)}
+                except (httpx.HTTPError, ValueError):
+                    return None
+                return None
+
+            # Probe in parallel to keep a host with no web server from paying
+            # two sequential connection timeouts. Prefer HTTP when both are
+            # available because it is the normal trusted-LAN Mainsail setup.
+            http_result, https_result = await asyncio.gather(
+                probe_scheme("http"),
+                probe_scheme("https"),
+            )
+            return http_result or https_result
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
 async def probe_moonraker_connection(
     ip_address: str,
     port: int = DEFAULT_MOONRAKER_PORT,
@@ -243,6 +326,7 @@ class MoonrakerClient:
         self._server_info: dict[str, Any] = {}
         self._printer_info: dict[str, Any] = {}
         self._webcams: list[dict[str, Any]] = []
+        self._web_ui: dict[str, str] | None = None
         self._disk_usage: dict[str, Any] = {}
         self._last_update = 0.0
         self._previous_state = "unknown"
@@ -324,14 +408,16 @@ class MoonrakerClient:
             return _result(await response.json())
 
     async def _discover(self, session: aiohttp.ClientSession) -> None:
-        server_info, printer_info, object_info = await asyncio.gather(
+        server_info, printer_info, object_info, web_ui = await asyncio.gather(
             self._get_json(session, "/server/info"),
             self._get_json(session, "/printer/info"),
             self._get_json(session, "/printer/objects/list"),
+            probe_klipper_web_ui(self.ip_address),
         )
         self._server_info = server_info or {}
         self._printer_info = printer_info or {}
         self._objects = set((object_info or {}).get("objects") or [])
+        self._web_ui = web_ui
         try:
             webcam_info = await self._get_json(session, "/server/webcams/list")
             self._webcams = list((webcam_info or {}).get("webcams") or [])
@@ -663,6 +749,7 @@ class MoonrakerClient:
                 "objects": sorted(self._objects),
                 "macros": macros,
                 "webcams": self._webcams,
+                "web_ui": self._web_ui,
                 "toolchanger_ready": self._toolchanger_ready(),
             },
             "provider_snapshot": {
@@ -692,6 +779,8 @@ class MoonrakerClient:
                     "kinematics": kinematics,
                     "mcu_count": sum(1 for name in self._objects if name == "mcu" or name.startswith("mcu ")),
                     "toolchanger_ready": self._toolchanger_ready() if tool_objects else None,
+                    "web_ui_name": self._web_ui.get("name") if self._web_ui else None,
+                    "web_ui_url": self._web_ui.get("url") if self._web_ui else None,
                 },
             },
         }
