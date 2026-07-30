@@ -3436,20 +3436,6 @@ function PrinterCard({
           </button>
           {fallbackProvider === 'klipper' ? (
             <>
-              {status?.device_info?.web_ui_url && (
-                <a
-                  href={status.device_info.web_ui_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
-                  onClick={() => setShowMenu(false)}
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  {t('printers.klipper.openWebUi', 'Open {{name}}', {
-                    name: status.device_info.web_ui_name || 'Klipper UI',
-                  })}
-                </a>
-              )}
               <button
                 className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
                 onClick={() => {
@@ -3595,6 +3581,23 @@ function PrinterCard({
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <h3 className={`font-semibold text-white ${getTitleSize()}`}>{printer.name}</h3>
+                    {fallbackProvider === 'klipper' && status?.device_info?.web_ui_url && (
+                      <a
+                        href={status.device_info.web_ui_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex flex-shrink-0 items-center gap-1 rounded-md border border-bambu-dark-tertiary bg-bambu-dark px-1.5 py-0.5 text-xs font-medium text-bambu-gray transition-colors hover:border-bambu-green/50 hover:text-bambu-green"
+                        aria-label={t('printers.klipper.openWebUi', 'Open {{name}}', {
+                          name: status.device_info.web_ui_name || 'Klipper UI',
+                        })}
+                        title={t('printers.klipper.openWebUi', 'Open {{name}}', {
+                          name: status.device_info.web_ui_name || 'Klipper UI',
+                        })}
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        <span>{status.device_info.web_ui_name || 'Klipper UI'}</span>
+                      </a>
+                    )}
                     {/* Connection indicator dot for compact mode */}
                     {viewMode === 'compact' && (() => {
                       const hmsErrors = status?.connected && status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];

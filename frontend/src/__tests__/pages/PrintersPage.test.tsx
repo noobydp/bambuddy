@@ -1549,11 +1549,13 @@ describe('Klipper printer controls', () => {
     expect(screen.getByText('Filament 1/2')).toBeInTheDocument();
     expect(screen.getByText('Z Tilt')).toBeInTheDocument();
     expect(screen.getByText('Homed XY')).toBeInTheDocument();
-    await user.click(await screen.findByTitle(/more/i));
     const webUiLink = screen.getByRole('link', { name: 'Open Mainsail' });
     expect(webUiLink).toHaveAttribute('href', 'http://192.0.2.30/');
     expect(webUiLink).toHaveAttribute('target', '_blank');
     expect(webUiLink).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(webUiLink).toHaveTextContent('Mainsail');
+    await user.click(await screen.findByTitle(/more/i));
+    expect(screen.getAllByRole('link', { name: 'Open Mainsail' })).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: 'Klipper controls' }));
 
     expect(await screen.findByText('Klipper controls — TinyT')).toBeInTheDocument();
