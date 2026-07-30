@@ -4119,8 +4119,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ script, danger_acknowledged: true }),
     }),
-  klipperEmergencyStop: (id: number, confirmation: string) =>
-    request<{ success: boolean }>(`/printers/${id}/klipper/emergency-stop`, {
+  emergencyStop: (id: number, confirmation: string) =>
+    request<{ success: boolean }>(`/printers/${id}/emergency-stop`, {
       method: 'POST',
       body: JSON.stringify({ confirmation }),
     }),

@@ -23,6 +23,7 @@ from backend.app.services.bambu_mqtt import HMSError, PrinterState
 logger = logging.getLogger(__name__)
 
 DEFAULT_FLASHFORGE_PORT = 8898
+DEFAULT_FLASHFORGE_MOONRAKER_PORT = 7125
 FLASHFORGE_POLL_INTERVAL_SECONDS = 10.0
 FLASHFORGE_STALE_AFTER_SECONDS = 45.0
 FLASHFORGE_JOB_CONTROL_CMD = "jobCtl_cmd"
@@ -302,6 +303,7 @@ class FlashForgeLocalClient:
         self._last_seen = 0.0
         self._last_state = "unknown"
         self._has_seen_state = False
+        self._moonraker_emergency_stop_available: bool | None = None
 
     def connect(self) -> None:
         """Start polling the printer."""
@@ -359,6 +361,11 @@ class FlashForgeLocalClient:
     def stop_print(self) -> bool:
         return self._send_job_control("cancel")
 
+    def emergency_stop(self) -> bool:
+        """Immediately halt Klipper through the printer's bundled Moonraker API."""
+        response = self._moonraker_request("printer/emergency_stop", method="POST", timeout=5)
+        return bool(response and response.get("result") == "ok")
+
     def pause_print(self) -> bool:
         return self._send_job_control("pause")
 
@@ -401,6 +408,8 @@ class FlashForgeLocalClient:
 
     def _poll_loop(self) -> None:
         while not self._stop_event.is_set():
+            if self._moonraker_emergency_stop_available is None:
+                self._moonraker_emergency_stop_available = self._probe_moonraker_emergency_stop()
             detail = self._fetch_detail()
             if detail is not None:
                 self._apply_detail(detail)
@@ -438,6 +447,35 @@ class FlashForgeLocalClient:
         except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             logger.debug("FlashForge %s request failed for %s: %s", path, self.ip_address, exc)
             return None
+
+    def _moonraker_request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        timeout: float = 3,
+    ) -> dict[str, Any] | None:
+        request = Request(
+            f"http://{self.ip_address}:{DEFAULT_FLASHFORGE_MOONRAKER_PORT}/{path.lstrip('/')}",
+            data=b"" if method == "POST" else None,
+            method=method,
+        )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode())
+                return payload if isinstance(payload, dict) else None
+        except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            logger.debug("FlashForge Moonraker %s request failed for %s: %s", path, self.ip_address, exc)
+            return None
+
+    def _probe_moonraker_emergency_stop(self) -> bool:
+        response = self._moonraker_request("server/info")
+        result = response.get("result") if response else None
+        return bool(
+            isinstance(result, dict)
+            and result.get("klippy_connected")
+            and "klippy_apis" in (result.get("components") or [])
+        )
 
     def _send_control_command(self, command: str, args: dict[str, Any]) -> bool:
         response = self._post_json(
@@ -504,6 +542,7 @@ class FlashForgeLocalClient:
             **detail,
             "device_model": detail.get("model") or self.model or "FlashForge",
             "vendor": "flashforge",
+            "moonraker_emergency_stop_available": self._moonraker_emergency_stop_available is True,
             "estimated_time_seconds": _int(detail.get("estimatedTime", detail.get("remainingTime")), 0),
             "print_duration_seconds": _int(detail.get("printDuration"), 0),
         }

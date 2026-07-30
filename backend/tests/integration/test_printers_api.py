@@ -567,6 +567,7 @@ class TestPrintersAPI:
         state.current_print = "cow.gcode.3mf"
         state.gcode_file = "cow.gcode.3mf"
         state.subtask_name = "cow.gcode.3mf"
+        state.raw_data["moonraker_emergency_stop_available"] = True
         state.temperatures = {
             "tool_0": 201,
             "tool_0_target": 210,
@@ -635,6 +636,7 @@ class TestPrintersAPI:
         assert capabilities["can_virtual_printer"] is False
         assert capabilities["can_manage_material_system"] is False
         assert capabilities["can_read_rfid"] is False
+        assert capabilities["can_emergency_stop"] is True
         assert "does not have an RFID reader" in capabilities["unsupported_reasons"]["can_read_rfid"]
         assert "known LAN API" in capabilities["unsupported_reasons"]["can_skip_objects"]
         assert "file listing/upload" in capabilities["unsupported_reasons"]["can_download_files"]
@@ -1205,6 +1207,72 @@ class TestPrintControlAPI:
             assert response.status_code == 200
             assert response.json()["success"] is True
             mock_client.stop_print.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_flashforge_emergency_stop_uses_bundled_moonraker(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+    ):
+        from backend.app.services.flashforge_local import FlashForgeLocalClient
+
+        printer = await printer_factory(
+            name="Creator",
+            provider="flashforge",
+            model="FlashForge Creator 5 Pro",
+        )
+        client = FlashForgeLocalClient(
+            printer.ip_address,
+            printer.serial_number,
+            printer.access_code,
+            model=printer.model,
+        )
+        client.state.connected = True
+        client.emergency_stop = MagicMock(return_value=True)
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = client
+
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/emergency-stop",
+                json={"confirmation": "EMERGENCY STOP"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        client.emergency_stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_klipper_emergency_stop_uses_generic_provider_route(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+    ):
+        from backend.app.services.moonraker import MoonrakerClient
+
+        printer = await printer_factory(
+            name="TinyT",
+            provider="klipper",
+            model="Klipper",
+            connection_port=7125,
+        )
+        client = MoonrakerClient(ip_address=printer.ip_address)
+        client.state.connected = True
+        client.emergency_stop = MagicMock(return_value=True)
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = client
+
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/emergency-stop",
+                json={"confirmation": "EMERGENCY STOP"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        client.emergency_stop.assert_called_once()
 
     # ========================================================================
     # Pause print endpoint

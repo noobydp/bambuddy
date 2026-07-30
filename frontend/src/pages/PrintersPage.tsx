@@ -1982,6 +1982,7 @@ function PrinterCard({
   // #1762: AMS Filament Backup status / control modal — opens from the badge.
   const [amsBackupModalOpen, setAmsBackupModalOpen] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
+  const [showEmergencyStopConfirm, setShowEmergencyStopConfirm] = useState(false);
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState<number | null>(null);
   const [showAirductMenu, setShowAirductMenu] = useState<number | null>(null);
@@ -2559,6 +2560,18 @@ function PrinterCard({
       queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToStopPrint'), 'error'),
+  });
+
+  const emergencyStopMutation = useMutation({
+    mutationFn: () => api.emergencyStop(printer.id, 'EMERGENCY STOP'),
+    onSuccess: () => {
+      showToast(`Emergency stop sent to ${printer.name}`, 'success');
+      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+    },
+    onError: (error: Error) => {
+      showToast(error.message || `Failed to emergency stop ${printer.name}`, 'error');
+    },
+    onSettled: () => setShowEmergencyStopConfirm(false),
   });
 
   const pausePrintMutation = useMutation({
@@ -3597,6 +3610,31 @@ function PrinterCard({
                         <ExternalLink className="h-3 w-3" />
                         <span>{status.device_info.web_ui_name || 'Klipper UI'}</span>
                       </a>
+                    )}
+                    {(fallbackProvider === 'klipper' || fallbackProvider === 'flashforge')
+                      && capabilities.can_emergency_stop && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setShowEmergencyStopConfirm(true);
+                        }}
+                        disabled={
+                          !status?.connected
+                          || !hasPermission('printers:control')
+                          || emergencyStopMutation.isPending
+                        }
+                        className="inline-flex flex-shrink-0 items-center gap-1 rounded-md border border-red-500/50 bg-red-500/15 px-1.5 py-0.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-400"
+                        aria-label={`Emergency stop ${printer.name}`}
+                        title={
+                          !hasPermission('printers:control')
+                            ? t('printers.permission.noControl')
+                            : `Emergency stop ${printer.name}`
+                        }
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                        <span>E-stop</span>
+                      </button>
                     )}
                     {/* Connection indicator dot for compact mode */}
                     {viewMode === 'compact' && (() => {
@@ -6723,6 +6761,20 @@ function PrinterCard({
         />
       )}
 
+      {/* Provider emergency-stop confirmation */}
+      {showEmergencyStopConfirm && (
+        <ConfirmModal
+          title={`Emergency stop ${printer.name}?`}
+          message="This immediately stops all motion and heaters. The printer will require a firmware restart before it can be used again."
+          confirmText="Emergency stop"
+          loadingText="Stopping..."
+          variant="danger"
+          isLoading={emergencyStopMutation.isPending}
+          onConfirm={() => emergencyStopMutation.mutate()}
+          onCancel={() => setShowEmergencyStopConfirm(false)}
+        />
+      )}
+
       {/* Stop Print Confirmation */}
       {showStopConfirm && (
         <ConfirmModal
@@ -7420,7 +7472,7 @@ function KlipperControlModal({
           onConfirm={() => {
             void runAction(
               'Emergency stop',
-              () => api.klipperEmergencyStop(printer.id, 'EMERGENCY STOP'),
+              () => api.emergencyStop(printer.id, 'EMERGENCY STOP'),
             ).finally(() => setShowEmergencyStopConfirm(false));
           }}
           onCancel={() => setShowEmergencyStopConfirm(false)}

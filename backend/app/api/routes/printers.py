@@ -57,6 +57,7 @@ from backend.app.services.bambu_ftp import (
     get_cached_3mf,
 )
 from backend.app.services.flashforge_local import (
+    FlashForgeLocalClient,
     get_flashforge_current_thumbnail,
     get_flashforge_gcode_thumbnail,
 )
@@ -220,6 +221,9 @@ def _printer_capabilities(provider: str | None, model: str | None, state=None) -
     if provider == PROVIDER_FLASHFORGE:
         local_api_gap = "FlashForge's known LAN API does not expose this Bambu control."
         file_gap = "FlashForge's known LAN API exposes file listing/upload, but not direct file download, delete, preview, or directory browsing."
+        moonraker_emergency_stop = bool(
+            (getattr(state, "raw_data", None) or {}).get("moonraker_emergency_stop_available")
+        )
         return PrinterCapabilities(
             can_pause=True,
             can_resume=True,
@@ -245,6 +249,7 @@ def _printer_capabilities(provider: str | None, model: str | None, state=None) -
             can_virtual_printer=False,
             can_manage_material_system=False,
             can_read_rfid=False,
+            can_emergency_stop=moonraker_emergency_stop,
             unsupported_reasons={
                 "can_airduct_mode": local_api_gap,
                 "can_bed_jog": local_api_gap,
@@ -260,6 +265,15 @@ def _printer_capabilities(provider: str | None, model: str | None, state=None) -
                 "can_virtual_printer": "Bambuddy's Virtual Printer emulates the Bambu LAN protocol.",
                 "can_manage_material_system": "The Creator 5 Pro API reports IFS slots but does not expose verified remote load/unload commands.",
                 "can_read_rfid": "The Creator 5 Pro IFS does not have an RFID reader.",
+                **(
+                    {}
+                    if moonraker_emergency_stop
+                    else {
+                        "can_emergency_stop": (
+                            "The printer's bundled Moonraker emergency-stop endpoint was not detected."
+                        )
+                    }
+                ),
             },
         )
     return PrinterCapabilities(
@@ -1149,6 +1163,54 @@ async def submit_klipper_gcode(
     return {"success": True}
 
 
+async def _perform_emergency_stop(
+    printer_id: int,
+    body: KlipperEmergencyStopBody,
+    db: AsyncSession,
+    *,
+    klipper_only: bool = False,
+):
+    if body.confirmation.strip().upper() != "EMERGENCY STOP":
+        raise HTTPException(412, "Type EMERGENCY STOP to confirm")
+
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    provider = provider_for_printer(printer)
+    if klipper_only and provider != PROVIDER_KLIPPER:
+        raise HTTPException(404, "Klipper operation is not available for this printer")
+
+    client = printer_manager.get_client(printer_id)
+    if provider == PROVIDER_KLIPPER:
+        available = isinstance(client, MoonrakerClient) and client.state.connected
+    elif provider == PROVIDER_FLASHFORGE and not klipper_only:
+        available = isinstance(client, FlashForgeLocalClient) and client.state.connected
+    else:
+        raise HTTPException(404, "Emergency stop is not available for this printer")
+    if not available:
+        raise HTTPException(409, "Printer emergency-stop service is not connected")
+
+    if not client.emergency_stop():
+        raise HTTPException(502, "Printer did not acknowledge the emergency stop")
+    logger.warning(
+        "PRINTER CONTROL AUDIT: printer=%s provider=%s action=emergency_stop",
+        printer_id,
+        provider,
+    )
+    return {"success": True}
+
+
+@router.post("/{printer_id}/emergency-stop")
+async def emergency_stop(
+    printer_id: int,
+    body: KlipperEmergencyStopBody,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _perform_emergency_stop(printer_id, body, db)
+
+
 @router.post("/{printer_id}/klipper/emergency-stop")
 async def klipper_emergency_stop(
     printer_id: int,
@@ -1156,13 +1218,7 @@ async def klipper_emergency_stop(
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
     db: AsyncSession = Depends(get_db),
 ):
-    _, client = await _require_klipper_client(printer_id, db)
-    if body.confirmation.strip().upper() != "EMERGENCY STOP":
-        raise HTTPException(412, "Type EMERGENCY STOP to confirm")
-    if not client.emergency_stop():
-        raise HTTPException(502, "Moonraker did not acknowledge the emergency stop")
-    logger.warning("KLIPPER AUDIT: printer=%s action=emergency_stop", printer_id)
-    return {"success": True}
+    return await _perform_emergency_stop(printer_id, body, db, klipper_only=True)
 
 
 @router.post("/{printer_id}/klipper/heaters/{heater_id}/target")

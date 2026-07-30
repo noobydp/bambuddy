@@ -350,6 +350,31 @@ def test_flashforge_job_control_commands_use_local_control_endpoint():
     assert all(call[1]["payload"]["cmd"] == "jobCtl_cmd" for call in calls)
 
 
+def test_flashforge_emergency_stop_uses_bundled_moonraker_endpoint():
+    client = FlashForgeLocalClient("192.0.2.211", "SN123", "code", model="Creator 5 Pro")
+    calls = []
+
+    def fake_moonraker_request(path, *, method="GET", timeout=3):
+        calls.append((path, method, timeout))
+        if path == "server/info":
+            return {
+                "result": {
+                    "klippy_connected": True,
+                    "components": ["klippy_apis"],
+                }
+            }
+        return {"result": "ok"}
+
+    client._moonraker_request = fake_moonraker_request
+
+    assert client._probe_moonraker_emergency_stop() is True
+    assert client.emergency_stop() is True
+    assert calls == [
+        ("server/info", "GET", 3),
+        ("printer/emergency_stop", "POST", 5),
+    ]
+
+
 def test_flashforge_chamber_light_uses_local_control_endpoint():
     client = FlashForgeLocalClient("192.0.2.211", "SN123", "code", model="Creator 5 Pro")
     calls = []

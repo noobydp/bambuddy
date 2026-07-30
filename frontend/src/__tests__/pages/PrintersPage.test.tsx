@@ -665,6 +665,7 @@ describe('PrintersPage', () => {
               can_virtual_printer: false,
               can_manage_material_system: false,
               can_read_rfid: false,
+              can_emergency_stop: true,
             },
           });
         })
@@ -683,6 +684,7 @@ describe('PrintersPage', () => {
       expect(screen.getByText('IFS-A')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Pause' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Emergency stop Creator 5 Pro' })).toBeEnabled();
       expect(screen.getByTitle(/chamber light/i)).toBeInTheDocument();
       expect(screen.getByTitle(/speed/i)).toBeInTheDocument();
       expect(screen.getByTitle(/set nozzle temperature/i)).toBeInTheDocument();
@@ -1462,7 +1464,7 @@ describe('PrintersPage', () => {
 describe('Klipper printer controls', () => {
   it('renders discovered Moonraker state and confirms emergency stop without typed input', async () => {
     const user = userEvent.setup();
-    let emergencyStopBody: unknown;
+    const emergencyStopBodies: unknown[] = [];
     localStorage.setItem('printerCardSize', '2');
     const printer = {
       ...mockPrinters[0],
@@ -1537,8 +1539,8 @@ describe('Klipper printer controls', () => {
         jobs: [{ job_id: 'one', filename: 'cube.gcode', status: 'completed', print_duration: 60 }],
       })),
       http.get('/api/v1/printers/:id/klipper/console/history', () => HttpResponse.json({ history: [] })),
-      http.post('/api/v1/printers/:id/klipper/emergency-stop', async ({ request }) => {
-        emergencyStopBody = await request.json();
+      http.post('/api/v1/printers/:id/emergency-stop', async ({ request }) => {
+        emergencyStopBodies.push(await request.json());
         return HttpResponse.json({ success: true });
       }),
     );
@@ -1559,6 +1561,16 @@ describe('Klipper printer controls', () => {
     expect(webUiLink).toHaveAttribute('target', '_blank');
     expect(webUiLink).toHaveAttribute('rel', 'noopener noreferrer');
     expect(webUiLink).toHaveTextContent('Mainsail');
+    const cardEmergencyStop = screen.getByRole('button', { name: 'Emergency stop TinyT' });
+    expect(cardEmergencyStop).toBeEnabled();
+    await user.click(cardEmergencyStop);
+    expect(await screen.findByRole('heading', { name: 'Emergency stop TinyT?' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Emergency stop' }));
+    await waitFor(() => expect(emergencyStopBodies).toEqual([{ confirmation: 'EMERGENCY STOP' }]));
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'Emergency stop TinyT?' })).not.toBeInTheDocument();
+    });
+
     await user.click(await screen.findByTitle(/more/i));
     expect(screen.getAllByRole('link', { name: 'Open Mainsail' })).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: 'Klipper controls' }));
@@ -1580,7 +1592,12 @@ describe('Klipper printer controls', () => {
     expect(screen.getByText(/immediately stops all motion and heaters/i)).toBeInTheDocument();
     const confirmationButtons = screen.getAllByRole('button', { name: 'Emergency stop' });
     await user.click(confirmationButtons[confirmationButtons.length - 1]);
-    await waitFor(() => expect(emergencyStopBody).toEqual({ confirmation: 'EMERGENCY STOP' }));
+    await waitFor(() => {
+      expect(emergencyStopBodies).toEqual([
+        { confirmation: 'EMERGENCY STOP' },
+        { confirmation: 'EMERGENCY STOP' },
+      ]);
+    });
     await waitFor(() => {
       expect(screen.queryByRole('heading', { name: 'Emergency stop TinyT?' })).not.toBeInTheDocument();
     });
