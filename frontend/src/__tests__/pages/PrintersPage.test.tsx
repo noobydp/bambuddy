@@ -1460,8 +1460,9 @@ describe('PrintersPage', () => {
 });
 
 describe('Klipper printer controls', () => {
-  it('renders discovered Moonraker state and keeps unsafe actions guarded', async () => {
+  it('renders discovered Moonraker state and confirms emergency stop without typed input', async () => {
     const user = userEvent.setup();
+    let emergencyStopBody: unknown;
     localStorage.setItem('printerCardSize', '2');
     const printer = {
       ...mockPrinters[0],
@@ -1536,6 +1537,10 @@ describe('Klipper printer controls', () => {
         jobs: [{ job_id: 'one', filename: 'cube.gcode', status: 'completed', print_duration: 60 }],
       })),
       http.get('/api/v1/printers/:id/klipper/console/history', () => HttpResponse.json({ history: [] })),
+      http.post('/api/v1/printers/:id/klipper/emergency-stop', async ({ request }) => {
+        emergencyStopBody = await request.json();
+        return HttpResponse.json({ success: true });
+      }),
     );
 
     render(<PrintersPage />);
@@ -1562,8 +1567,23 @@ describe('Klipper printer controls', () => {
     expect(screen.getByText('T0 filament')).toBeInTheDocument();
     expect(screen.getByText('cube.gcode')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'T1' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Emergency stop' })).toBeDisabled();
+    const emergencyStopButton = screen.getByRole('button', { name: 'Emergency stop' });
+    expect(emergencyStopButton).toBeEnabled();
+    expect(screen.queryByPlaceholderText('Type EMERGENCY STOP')).not.toBeInTheDocument();
+    const emergencyStopHeading = screen.getByRole('heading', { name: 'Emergency stop' });
+    const macroHeading = screen.getByRole('heading', { name: 'Discovered macros' });
+    expect(emergencyStopHeading.compareDocumentPosition(macroHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole('button', { name: 'I understand the risk' })).toBeInTheDocument();
+
+    await user.click(emergencyStopButton);
+    expect(await screen.findByRole('heading', { name: 'Emergency stop TinyT?' })).toBeInTheDocument();
+    expect(screen.getByText(/immediately stops all motion and heaters/i)).toBeInTheDocument();
+    const confirmationButtons = screen.getAllByRole('button', { name: 'Emergency stop' });
+    await user.click(confirmationButtons[confirmationButtons.length - 1]);
+    await waitFor(() => expect(emergencyStopBody).toEqual({ confirmation: 'EMERGENCY STOP' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'Emergency stop TinyT?' })).not.toBeInTheDocument();
+    });
   });
 });
 

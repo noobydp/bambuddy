@@ -7094,7 +7094,7 @@ function KlipperControlModal({
   const [consoleAcknowledged, setConsoleAcknowledged] = useState(false);
   const [consoleInput, setConsoleInput] = useState('');
   const [macroParameters, setMacroParameters] = useState<Record<string, string>>({});
-  const [emergencyConfirmation, setEmergencyConfirmation] = useState('');
+  const [showEmergencyStopConfirm, setShowEmergencyStopConfirm] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [heaterTargets, setHeaterTargets] = useState<Record<string, string>>({});
   const [fanTargets, setFanTargets] = useState<Record<string, string>>({});
@@ -7138,9 +7138,10 @@ function KlipperControlModal({
   const toolSelectionReady = status.state === 'IDLE' && fullyHomed && toolReady;
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-start sm:items-center justify-center bg-black/60 p-4 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-4xl my-auto max-h-[calc(100dvh-2rem)] overflow-y-auto bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="sticky top-0 z-10 flex items-center justify-between p-4 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary">
+    <>
+      <div className="fixed inset-0 z-[110] flex items-start sm:items-center justify-center bg-black/60 p-4 overflow-y-auto app-scrollbar" onClick={onClose}>
+        <div className="flex w-full max-w-4xl my-auto max-h-[calc(100dvh-2rem)] flex-col overflow-hidden bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="flex shrink-0 items-center justify-between p-4 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary">
           <div>
             <h2 className="text-lg font-semibold text-white">Klipper controls — {printer.name}</h2>
             <p className="text-xs text-bambu-gray">
@@ -7151,7 +7152,7 @@ function KlipperControlModal({
           <button onClick={onClose} className="p-1 text-bambu-gray hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-4 p-4">
+          <div className="grid min-h-0 overflow-y-auto app-scrollbar lg:grid-cols-2 gap-4 p-4">
           <section className="space-y-3">
             <h3 className="font-medium text-white">Live machine state</h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
@@ -7314,7 +7315,7 @@ function KlipperControlModal({
             )}
 
             <h3 className="pt-2 font-medium text-white">Moonraker history</h3>
-            <div className="max-h-40 space-y-1 overflow-y-auto">
+            <div className="max-h-40 space-y-1 overflow-y-auto app-scrollbar pr-1">
               {(historyQuery.data?.jobs ?? []).map((job, index) => (
                 <div key={job.job_id ?? `${job.filename}-${index}`} className="rounded bg-bambu-dark p-2 text-xs">
                   <div className="flex items-center justify-between gap-2">
@@ -7334,8 +7335,24 @@ function KlipperControlModal({
           </section>
 
           <section className="space-y-3">
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 space-y-2">
+              <h3 className="font-medium text-red-400">Emergency stop</h3>
+              <p className="text-xs text-bambu-gray">
+                Immediately stops all Klipper motion and heaters. A firmware restart is required before printing can resume.
+              </p>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={!canControl || busyAction !== null}
+                onClick={() => setShowEmergencyStopConfirm(true)}
+              >
+                <AlertTriangle className="w-4 h-4 mr-1" />
+                Emergency stop
+              </Button>
+            </div>
+
             <h3 className="font-medium text-white">Discovered macros</h3>
-            <div className="max-h-52 overflow-y-auto space-y-1">
+            <div className="max-h-52 overflow-y-auto app-scrollbar space-y-1 pr-1">
               {(diagnosticsQuery.data?.macros ?? []).map(macro => (
                 <div key={macro} className="flex gap-2">
                   <input
@@ -7358,7 +7375,7 @@ function KlipperControlModal({
               </div>
             ) : (
               <>
-                <div className="h-52 overflow-y-auto bg-black/40 rounded p-2 font-mono text-xs space-y-1">
+                <div className="h-52 overflow-y-auto app-scrollbar bg-black/40 rounded p-2 font-mono text-xs space-y-1">
                   {(consoleQuery.data?.history ?? []).map((entry, index) => (
                     <div key={`${entry.timestamp}-${index}`} className={entry.direction === 'command' ? 'text-cyan-300' : 'text-bambu-gray'}>
                       <span className="opacity-60">{entry.direction === 'command' ? '>' : '<'}</span> {entry.text}
@@ -7386,28 +7403,30 @@ function KlipperControlModal({
               </>
             )}
 
-            <div className="pt-3 mt-3 border-t border-red-500/30 space-y-2">
-              <h3 className="font-medium text-red-400">Emergency stop</h3>
-              <p className="text-xs text-bambu-gray">This immediately shuts down Klipper and requires a firmware restart.</p>
-              <input
-                className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-red-500/40 rounded"
-                value={emergencyConfirmation}
-                onChange={e => setEmergencyConfirmation(e.target.value)}
-                placeholder="Type EMERGENCY STOP"
-              />
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={!canControl || emergencyConfirmation !== 'EMERGENCY STOP' || busyAction !== null}
-                onClick={() => runAction('Emergency stop', () => api.klipperEmergencyStop(printer.id, emergencyConfirmation))}
-              >
-                Emergency stop
-              </Button>
-            </div>
           </section>
+          </div>
         </div>
       </div>
-    </div>
+
+      {showEmergencyStopConfirm && (
+        <ConfirmModal
+          title={`Emergency stop ${printer.name}?`}
+          message="This immediately stops all motion and heaters. Klipper will require a firmware restart before the printer can be used again."
+          confirmText="Emergency stop"
+          loadingText="Stopping..."
+          variant="danger"
+          overlayZIndex="z-[120]"
+          isLoading={busyAction === 'Emergency stop'}
+          onConfirm={() => {
+            void runAction(
+              'Emergency stop',
+              () => api.klipperEmergencyStop(printer.id, 'EMERGENCY STOP'),
+            ).finally(() => setShowEmergencyStopConfirm(false));
+          }}
+          onCancel={() => setShowEmergencyStopConfirm(false)}
+        />
+      )}
+    </>
   );
 }
 
