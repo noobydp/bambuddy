@@ -140,6 +140,22 @@ def _legacy_material_systems(state) -> list[dict]:
     return systems
 
 
+def _native_material_systems(native: dict) -> list[dict]:
+    """Normalize provider-native IDs at the public snapshot boundary.
+
+    Provider protocols do not agree on slot identifier types: FlashForge IFS
+    uses numeric tray indexes while Klipper uses object names.  The public API
+    exposes stable strings so the frontend and assignment routes can address
+    either form without provider-specific coercion.
+    """
+    systems: list[dict] = []
+    for system in native.get("material_systems") or []:
+        normalized_system = {**system, "id": str(system["id"])}
+        normalized_system["slots"] = [{**slot, "id": str(slot["id"])} for slot in system.get("slots") or []]
+        systems.append(normalized_system)
+    return systems
+
+
 def build_printer_snapshot(
     state,
     *,
@@ -159,7 +175,7 @@ def build_printer_snapshot(
             "fans": native.get("fans") or [],
             "sensors": native.get("sensors") or [],
             "motion": native.get("motion"),
-            "material_systems": native.get("material_systems") or [],
+            "material_systems": _native_material_systems(native),
             "device_info": native.get("device_info"),
         }
 

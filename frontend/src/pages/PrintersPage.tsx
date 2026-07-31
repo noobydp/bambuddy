@@ -124,7 +124,7 @@ import { getPrinterImage, getWifiStrength, filterCompatibleQueueItems } from '..
 import { FilamentSlotCircle } from '../components/FilamentSlotCircle';
 import { Collapsible } from '../components/Collapsible';
 import { ConnectionDiagnosticModal, DiagnosticChecklist } from '../components/ConnectionDiagnostic';
-import { getColorName, getSwatchStyle, parseFilamentColor, isLightColor } from '../utils/colors';
+import { getColorName, parseFilamentColor, isLightColor } from '../utils/colors';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 export interface SpoolmanSlotAssignmentRow {
@@ -5059,123 +5059,137 @@ function PrinterCard({
               );
             })()}
 
-            {/* Klipper toolhead filament assignments. These are Bambuddy-only
-                metadata: clicking a slot never sends a Moonraker command. */}
+            {/* Klipper toolheads use the same card, slot circle and fill-bar
+                proportions as AMS/IFS. Assignments remain Bambuddy-only. */}
             {viewMode === 'expanded' && status.material_systems
               ?.filter((system) => system.kind === 'toolheads')
-              .map((system) => (
-                <div className="mt-3" key={system.id}>
-                  <div className="mb-2 flex items-center gap-2">
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-bambu-gray">
-                      {t('printers.filaments')}
-                    </span>
-                    <div className="h-[2px] flex-1 bg-bambu-dark-tertiary" />
-                  </div>
-                  <div className="min-w-0 rounded-[10px] bg-bambu-dark p-2">
-                    <div className="mb-1 flex min-h-7 items-center rounded-lg bg-bambu-dark-secondary px-2 py-1">
-                      <span className="text-[10px] font-medium text-white">{system.name}</span>
-                      <span className="ml-auto text-[9px] text-bambu-gray">
-                        {system.slots.filter((slot) => slot.occupied ?? materialSlotAssignments?.some((item) =>
-                          item.printer_id === printer.id
-                          && item.material_system_id === system.id
-                          && item.slot_id === slot.id
-                        )).length}/{system.slots.length}
-                      </span>
-                    </div>
-                    <div
-                      className="grid gap-1"
-                      style={{ gridTemplateColumns: `repeat(${Math.max(1, system.slots.length)}, minmax(3.5rem, 1fr))` }}
-                    >
-                      {system.slots.map((slot) => {
-                        const assignment = materialSlotAssignments?.find((item) =>
-                          item.printer_id === printer.id
-                          && item.material_system_id === system.id
-                          && item.slot_id === slot.id
-                        );
-                        const spool = assignment?.source === 'internal'
-                          ? assignment.spool
-                          : spoolmanSpools?.find((item) => item.id === assignment?.spoolman_spool_id);
-                        const remainingPercent = spool && spool.label_weight > 0
-                          ? Math.max(0, Math.min(100, Math.round(
-                              ((spool.label_weight - spool.weight_used) / spool.label_weight) * 100,
-                            )))
-                          : slot.remaining_percent;
-                        const occupied = slot.occupied ?? Boolean(assignment);
-                        const canAssign = hasPermission('inventory:update');
+              .map((system) => {
+                const slotCount = Math.max(1, system.slots.length);
+                const gapCount = Math.max(0, slotCount - 1);
+                const minWidth = `calc(${slotCount} * 3.5rem + ${gapCount} * 0.25rem + 1rem)`;
+                const loadedCount = system.slots.filter((slot) => slot.occupied ?? materialSlotAssignments?.some((item) =>
+                  item.printer_id === printer.id
+                  && item.material_system_id === system.id
+                  && item.slot_id === slot.id
+                )).length;
 
-                        return (
-                          <div
-                            key={slot.id}
-                            className={`relative min-w-0 overflow-hidden rounded-lg border bg-bambu-dark-secondary transition-colors ${
-                              slot.active
-                                ? 'border-bambu-green ring-1 ring-bambu-green/70'
-                                : 'border-bambu-dark-tertiary'
-                            }`}
-                            title={
-                              slot.sensor_id
-                                ? `${slot.label}: ${slot.occupied ? 'filament detected' : 'empty'}`
-                                : `${slot.label}: ${assignment ? 'manually marked as loaded' : 'no filament assigned'}`
-                            }
-                          >
-                            {remainingPercent != null && (
+                return (
+                  <div className="mt-3" key={system.id}>
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-bambu-gray">
+                        {t('printers.filaments')}
+                      </span>
+                      <div className="h-[2px] flex-1 bg-bambu-dark-tertiary" />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <div
+                        className="min-w-0 space-y-1 rounded-[10px] bg-bambu-dark p-2"
+                        style={{ flex: `1 1 ${minWidth}`, minWidth }}
+                      >
+                        <div className="flex min-h-7 w-full items-center justify-between gap-2 rounded-lg bg-bambu-dark-secondary px-2 py-1">
+                          <span className="truncate text-[10px] font-medium text-white">{system.name}</span>
+                          <span className="shrink-0 text-[9px] text-bambu-gray">{loadedCount}/{system.slots.length}</span>
+                        </div>
+                        <div
+                          className="grid w-full gap-1"
+                          style={{ gridTemplateColumns: `repeat(${slotCount}, minmax(3.5rem, 1fr))` }}
+                        >
+                          {system.slots.map((slot) => {
+                            const assignment = materialSlotAssignments?.find((item) =>
+                              item.printer_id === printer.id
+                              && item.material_system_id === system.id
+                              && item.slot_id === slot.id
+                            );
+                            const spool = assignment?.source === 'internal'
+                              ? assignment.spool
+                              : spoolmanSpools?.find((item) => item.id === assignment?.spoolman_spool_id);
+                            const remainingPercent = spool && spool.label_weight > 0
+                              ? Math.max(0, Math.min(100, Math.round(
+                                  ((spool.label_weight - spool.weight_used) / spool.label_weight) * 100,
+                                )))
+                              : slot.remaining_percent;
+                            const occupied = slot.occupied ?? Boolean(assignment);
+                            const isEmpty = !occupied;
+                            const canAssign = hasPermission('inventory:update');
+                            const materialLabel = spool
+                              ? `${spool.material}${spool.subtype ? ` ${spool.subtype}` : ''}`
+                              : slot.material_type;
+                            const trayColor = spool?.rgba || slot.color;
+
+                            return (
                               <div
-                                className="absolute inset-x-0 bottom-0 h-1 opacity-80"
-                                style={{
-                                  width: `${remainingPercent}%`,
-                                  backgroundColor: getFillBarColor(remainingPercent),
-                                }}
-                              />
-                            )}
-                            <button
-                              type="button"
-                              disabled={!canAssign}
-                              onClick={() => canAssign && setAssignMaterialSlotModal({
-                                materialSystemId: system.id,
-                                slotId: slot.id,
-                                slotLabel: slot.label,
-                              })}
-                              className="flex min-h-[58px] w-full min-w-0 flex-col items-center justify-center gap-0.5 px-2 py-1.5 text-center disabled:cursor-default"
-                            >
-                              <div className="flex max-w-full items-center gap-1">
-                                <span
-                                  className={`h-2 w-2 shrink-0 rounded-full ${
-                                    occupied ? 'bg-bambu-green' : 'bg-bambu-gray/30 opacity-30'
-                                  }`}
-                                  style={spool?.rgba ? getSwatchStyle(spool.rgba) : undefined}
-                                />
-                                <span className="truncate text-[10px] font-semibold text-white">{slot.label}</span>
-                              </div>
-                              <span className="max-w-full truncate text-[10px] font-medium text-bambu-gray">
-                                {spool
-                                  ? `${spool.material}${spool.subtype ? ` ${spool.subtype}` : ''}`
-                                  : (slot.occupied === false ? t('ams.emptySlot') : t('inventory.assignSpool'))}
-                              </span>
-                              {spool && (
-                                <span className="max-w-full truncate text-[9px] text-bambu-gray/70">
-                                  {spool.color_name || (remainingPercent != null ? `${remainingPercent}%` : '')}
-                                </span>
-                              )}
-                            </button>
-                            {assignment && canAssign && (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onUnassignMaterialSlot?.(printer.id, system.id, slot.id);
-                                }}
-                                className="absolute right-1 top-1 rounded bg-black/25 p-0.5 text-bambu-gray hover:bg-red-500/20 hover:text-red-400"
-                                title={t('inventory.unassignSpool')}
+                                key={slot.id}
+                                className="group relative w-full min-w-14"
+                                title={
+                                  slot.sensor_id
+                                    ? `${slot.label}: ${slot.occupied ? 'filament detected' : 'empty'}`
+                                    : `${slot.label}: ${assignment ? 'manually marked as loaded' : 'no filament assigned'}`
+                                }
                               >
-                                <X className="h-2.5 w-2.5" />
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
+                                <button
+                                  type="button"
+                                  disabled={!canAssign}
+                                  onClick={() => canAssign && setAssignMaterialSlotModal({
+                                    materialSystemId: system.id,
+                                    slotId: slot.id,
+                                    slotLabel: slot.label,
+                                  })}
+                                  className="block w-full text-center disabled:cursor-default"
+                                >
+                                  <div
+                                    data-testid={`toolhead-slot-${slot.id}`}
+                                    className={`relative w-full rounded-lg bg-bambu-dark-secondary p-1 text-center ${isEmpty ? 'opacity-50' : ''} ${
+                                    slot.active ? 'ring-2 ring-bambu-green ring-offset-1 ring-offset-bambu-dark' : ''
+                                  }`}
+                                  >
+                                    <FilamentSlotCircle
+                                      trayColor={trayColor}
+                                      trayType={materialLabel}
+                                      isEmpty={isEmpty}
+                                      emptyKind={isEmpty ? 'physical' : null}
+                                      slotNumber={slot.label}
+                                    />
+                                    <div className="truncate text-[9px] font-bold text-white">
+                                      {materialLabel || (slot.occupied === false ? t('ams.slotEmpty') : t('inventory.assignSpool'))}
+                                    </div>
+                                    <div
+                                      data-testid={`toolhead-slot-fill-${slot.id}`}
+                                      className="mt-1 h-1.5 overflow-hidden rounded-full bg-black/30"
+                                    >
+                                      {remainingPercent != null && remainingPercent >= 0 && !isEmpty && (
+                                        <div
+                                          className="h-full rounded-full transition-all"
+                                          style={{
+                                            width: `${remainingPercent}%`,
+                                            backgroundColor: getFillBarColor(remainingPercent),
+                                          }}
+                                        />
+                                      )}
+                                    </div>
+                                  </div>
+                                </button>
+                                {assignment && canAssign && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      onUnassignMaterialSlot?.(printer.id, system.id, slot.id);
+                                    }}
+                                    className="absolute right-0.5 top-0.5 z-10 rounded bg-black/25 p-0.5 text-bambu-gray hover:bg-red-500/20 hover:text-red-400"
+                                    title={t('inventory.unassignSpool')}
+                                  >
+                                    <X className="h-2.5 w-2.5" />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
             {/* AMS Units - 2-Column Grid Layout */}
             {(amsData?.length > 0 || status.vt_tray.length > 0) && viewMode === 'expanded' && (() => {

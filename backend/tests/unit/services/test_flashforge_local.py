@@ -179,6 +179,7 @@ def test_apply_detail_maps_creator_5_pro_status():
     snapshot = client.state.raw_data["provider_snapshot"]
     assert [tool["label"] for tool in snapshot["tools"]] == ["Tool 1", "Tool 2", "Tool 3", "Tool 4"]
     assert snapshot["material_systems"][0]["kind"] == "flashforge_ifs"
+    assert [slot["id"] for slot in snapshot["material_systems"][0]["slots"]] == ["0", "1"]
     assert snapshot["material_systems"][0]["slots"][0]["remaining_percent"] is None
     assert client.state.cooling_fan_speed == 70
     assert client.state.speed_level == 3

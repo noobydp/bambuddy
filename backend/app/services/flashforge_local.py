@@ -683,7 +683,7 @@ class FlashForgeLocalClient:
                         "kind": "flashforge_ifs",
                         "slots": [
                             {
-                                "id": index,
+                                "id": str(index),
                                 "label": f"Slot {index + 1}",
                                 "occupied": bool(slot.get("hasFilament", bool(slot))),
                                 "active": current_slot == index,

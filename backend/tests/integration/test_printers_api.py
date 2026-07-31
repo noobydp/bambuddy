@@ -598,7 +598,25 @@ class TestPrintersAPI:
             ],
             "heaters": [],
             "fans": [],
-            "material_systems": [],
+            "material_systems": [
+                {
+                    "id": "ifs_0",
+                    "name": "IFS",
+                    "kind": "flashforge_ifs",
+                    "slots": [
+                        {
+                            "id": index,
+                            "label": f"Slot {index + 1}",
+                            "occupied": True,
+                            "active": index == 0,
+                            "material_type": "PLA",
+                            "color": "FF0000FF",
+                            "remaining_percent": None,
+                        }
+                        for index in range(4)
+                    ],
+                }
+            ],
             "device_info": {
                 "vendor": "FlashForge",
                 "model": "Creator 5 Pro",
@@ -617,6 +635,7 @@ class TestPrintersAPI:
         result = response.json()
         assert result["provider"] == "flashforge"
         assert [tool["temperature"] for tool in result["tools"]] == [201, 202, 203, 204]
+        assert [slot["id"] for slot in result["material_systems"][0]["slots"]] == ["0", "1", "2", "3"]
         assert result["device_info"]["build_volume"] == "256X256X256"
         capabilities = result["capabilities"]
         assert capabilities["can_pause"] is True

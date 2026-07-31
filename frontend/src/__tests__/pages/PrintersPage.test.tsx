@@ -274,6 +274,8 @@ describe('PrintersPage', () => {
       expect(await screen.findByText('Toolheads')).toBeInTheDocument();
       expect(screen.getByText('T0')).toBeInTheDocument();
       expect(screen.getByText('PLA Basic')).toBeInTheDocument();
+      expect(screen.getByTestId('toolhead-slot-extruder')).toHaveClass('p-1', 'ring-2', 'ring-bambu-green');
+      expect(screen.getByTestId('toolhead-slot-fill-extruder')).toHaveClass('h-1.5');
     });
 
     it('shows a camera-first fleet overview on mobile and opens printer details', async () => {
