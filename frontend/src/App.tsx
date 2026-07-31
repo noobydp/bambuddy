@@ -201,6 +201,7 @@ function App() {
                 {/* Main app with WebSocket for real-time updates */}
                 <Route element={<ProtectedRoute><WebSocketProvider><Layout /></WebSocketProvider></ProtectedRoute>}>
                   <Route index element={<PrintersPage />} />
+                  <Route path="printers/:printerId" element={<PrintersPage />} />
                   <Route path="archives" element={<ArchivesPage />} />
                   <Route path="queue" element={<QueuePage />} />
                   {/* Slicer Pipelines (#1425) — Pipelines tab lives on the

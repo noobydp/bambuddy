@@ -120,7 +120,7 @@ def _legacy_material_systems(state) -> list[dict]:
                 remaining = None
             slots.append(
                 {
-                    "id": tray_id,
+                    "id": str(tray_id),
                     "label": f"Slot {index + 1}",
                     "occupied": exists,
                     "active": tray_now == global_id,

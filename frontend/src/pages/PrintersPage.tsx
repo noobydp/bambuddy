@@ -88,10 +88,10 @@ import {
 } from 'lucide-react';
 
 // Aliased: lucide-react already exports a `Link` icon into this module.
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
 import { api, discoveryApi, firmwareApi, withStreamToken, ApiError } from '../api/client';
 import { formatDateOnly, formatETA, formatDuration, parseUTCDate } from '../utils/date';
-import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult } from '../api/client';
+import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, MaterialSlotAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult } from '../api/client';
 import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -110,6 +110,7 @@ import type { HeaterSensorKind } from '../api/client';
 import { FilamentHoverCard, EmptySlotHoverCard } from '../components/FilamentHoverCard';
 import { LinkSpoolModal } from '../components/LinkSpoolModal';
 import { AssignSpoolModal } from '../components/AssignSpoolModal';
+import { AssignMaterialSlotModal } from '../components/AssignMaterialSlotModal';
 import { ConfigureAmsSlotModal } from '../components/ConfigureAmsSlotModal';
 import { useToast } from '../contexts/ToastContext';
 import { ChamberLight } from '../components/icons/ChamberLight';
@@ -123,7 +124,8 @@ import { getPrinterImage, getWifiStrength, filterCompatibleQueueItems } from '..
 import { FilamentSlotCircle } from '../components/FilamentSlotCircle';
 import { Collapsible } from '../components/Collapsible';
 import { ConnectionDiagnosticModal, DiagnosticChecklist } from '../components/ConnectionDiagnostic';
-import { getColorName, parseFilamentColor, isLightColor } from '../utils/colors';
+import { getColorName, getSwatchStyle, parseFilamentColor, isLightColor } from '../utils/colors';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 export interface SpoolmanSlotAssignmentRow {
   printer_id: number;
@@ -1904,8 +1906,10 @@ function PrinterCard({
   onUnassignSpool,
   spoolmanSpools,
   spoolmanSlotAssignments,
+  materialSlotAssignments,
   spoolmanLoading = false,
   onUnassignSpoolmanSpool,
+  onUnassignMaterialSlot,
   timeFormat = 'system',
   cameraViewMode = 'window',
   onOpenEmbeddedCamera,
@@ -1944,8 +1948,10 @@ function PrinterCard({
   onUnassignSpool?: (printerId: number, amsId: number, trayId: number) => void;
   spoolmanSpools?: InventorySpool[];
   spoolmanSlotAssignments?: SpoolmanSlotAssignmentRow[];
+  materialSlotAssignments?: MaterialSlotAssignment[];
   spoolmanLoading?: boolean;
   onUnassignSpoolmanSpool?: (spoolmanSpoolId: number) => void;
+  onUnassignMaterialSlot?: (printerId: number, materialSystemId: string, slotId: string) => void;
   timeFormat?: 'system' | '12h' | '24h';
   cameraViewMode?: 'window' | 'embedded';
   onOpenEmbeddedCamera?: (printerId: number, printerName: string) => void;
@@ -2033,6 +2039,11 @@ function PrinterCard({
     amsId: number;
     trayId: number;
     trayInfo: { type: string; color: string; location: string; material?: string; profile?: string };
+  } | null>(null);
+  const [assignMaterialSlotModal, setAssignMaterialSlotModal] = useState<{
+    materialSystemId: string;
+    slotId: string;
+    slotLabel: string;
   } | null>(null);
   const [configureSlotModal, setConfigureSlotModal] = useState<{
     amsId: number;
@@ -5048,6 +5059,124 @@ function PrinterCard({
               );
             })()}
 
+            {/* Klipper toolhead filament assignments. These are Bambuddy-only
+                metadata: clicking a slot never sends a Moonraker command. */}
+            {viewMode === 'expanded' && status.material_systems
+              ?.filter((system) => system.kind === 'toolheads')
+              .map((system) => (
+                <div className="mt-3" key={system.id}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-bambu-gray">
+                      {t('printers.filaments')}
+                    </span>
+                    <div className="h-[2px] flex-1 bg-bambu-dark-tertiary" />
+                  </div>
+                  <div className="min-w-0 rounded-[10px] bg-bambu-dark p-2">
+                    <div className="mb-1 flex min-h-7 items-center rounded-lg bg-bambu-dark-secondary px-2 py-1">
+                      <span className="text-[10px] font-medium text-white">{system.name}</span>
+                      <span className="ml-auto text-[9px] text-bambu-gray">
+                        {system.slots.filter((slot) => slot.occupied ?? materialSlotAssignments?.some((item) =>
+                          item.printer_id === printer.id
+                          && item.material_system_id === system.id
+                          && item.slot_id === slot.id
+                        )).length}/{system.slots.length}
+                      </span>
+                    </div>
+                    <div
+                      className="grid gap-1"
+                      style={{ gridTemplateColumns: `repeat(${Math.max(1, system.slots.length)}, minmax(3.5rem, 1fr))` }}
+                    >
+                      {system.slots.map((slot) => {
+                        const assignment = materialSlotAssignments?.find((item) =>
+                          item.printer_id === printer.id
+                          && item.material_system_id === system.id
+                          && item.slot_id === slot.id
+                        );
+                        const spool = assignment?.source === 'internal'
+                          ? assignment.spool
+                          : spoolmanSpools?.find((item) => item.id === assignment?.spoolman_spool_id);
+                        const remainingPercent = spool && spool.label_weight > 0
+                          ? Math.max(0, Math.min(100, Math.round(
+                              ((spool.label_weight - spool.weight_used) / spool.label_weight) * 100,
+                            )))
+                          : slot.remaining_percent;
+                        const occupied = slot.occupied ?? Boolean(assignment);
+                        const canAssign = hasPermission('inventory:update');
+
+                        return (
+                          <div
+                            key={slot.id}
+                            className={`relative min-w-0 overflow-hidden rounded-lg border bg-bambu-dark-secondary transition-colors ${
+                              slot.active
+                                ? 'border-bambu-green ring-1 ring-bambu-green/70'
+                                : 'border-bambu-dark-tertiary'
+                            }`}
+                            title={
+                              slot.sensor_id
+                                ? `${slot.label}: ${slot.occupied ? 'filament detected' : 'empty'}`
+                                : `${slot.label}: ${assignment ? 'manually marked as loaded' : 'no filament assigned'}`
+                            }
+                          >
+                            {remainingPercent != null && (
+                              <div
+                                className="absolute inset-x-0 bottom-0 h-1 opacity-80"
+                                style={{
+                                  width: `${remainingPercent}%`,
+                                  backgroundColor: getFillBarColor(remainingPercent),
+                                }}
+                              />
+                            )}
+                            <button
+                              type="button"
+                              disabled={!canAssign}
+                              onClick={() => canAssign && setAssignMaterialSlotModal({
+                                materialSystemId: system.id,
+                                slotId: slot.id,
+                                slotLabel: slot.label,
+                              })}
+                              className="flex min-h-[58px] w-full min-w-0 flex-col items-center justify-center gap-0.5 px-2 py-1.5 text-center disabled:cursor-default"
+                            >
+                              <div className="flex max-w-full items-center gap-1">
+                                <span
+                                  className={`h-2 w-2 shrink-0 rounded-full ${
+                                    occupied ? 'bg-bambu-green' : 'bg-bambu-gray/30 opacity-30'
+                                  }`}
+                                  style={spool?.rgba ? getSwatchStyle(spool.rgba) : undefined}
+                                />
+                                <span className="truncate text-[10px] font-semibold text-white">{slot.label}</span>
+                              </div>
+                              <span className="max-w-full truncate text-[10px] font-medium text-bambu-gray">
+                                {spool
+                                  ? `${spool.material}${spool.subtype ? ` ${spool.subtype}` : ''}`
+                                  : (slot.occupied === false ? t('ams.emptySlot') : t('inventory.assignSpool'))}
+                              </span>
+                              {spool && (
+                                <span className="max-w-full truncate text-[9px] text-bambu-gray/70">
+                                  {spool.color_name || (remainingPercent != null ? `${remainingPercent}%` : '')}
+                                </span>
+                              )}
+                            </button>
+                            {assignment && canAssign && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onUnassignMaterialSlot?.(printer.id, system.id, slot.id);
+                                }}
+                                className="absolute right-1 top-1 rounded bg-black/25 p-0.5 text-bambu-gray hover:bg-red-500/20 hover:text-red-400"
+                                title={t('inventory.unassignSpool')}
+                              >
+                                <X className="h-2.5 w-2.5" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ))}
+
             {/* AMS Units - 2-Column Grid Layout */}
             {(amsData?.length > 0 || status.vt_tray.length > 0) && viewMode === 'expanded' && (() => {
               // Separate regular AMS (4-tray) from HT AMS (1-tray)
@@ -6906,6 +7035,17 @@ function PrinterCard({
         />
       )}
 
+      {assignMaterialSlotModal && (
+        <AssignMaterialSlotModal
+          printerId={printer.id}
+          materialSystemId={assignMaterialSlotModal.materialSystemId}
+          slotId={assignMaterialSlotModal.slotId}
+          slotLabel={assignMaterialSlotModal.slotLabel}
+          spoolmanEnabled={!!spoolmanEnabled}
+          onClose={() => setAssignMaterialSlotModal(null)}
+        />
+      )}
+
       {/* Configure AMS Slot Modal */}
       {configureSlotModal && (
         <ConfigureAmsSlotModal
@@ -7478,6 +7618,7 @@ function KlipperControlModal({
           onCancel={() => setShowEmergencyStopConfirm(false)}
         />
       )}
+
     </>
   );
 }
@@ -8793,6 +8934,14 @@ function PowerDropdownItem({
 
 export function PrintersPage() {
   const { t } = useTranslation();
+  const { printerId: printerIdParam } = useParams<{ printerId?: string }>();
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const parsedPrinterId = printerIdParam == null ? null : Number(printerIdParam);
+  const detailPrinterId = parsedPrinterId != null && Number.isInteger(parsedPrinterId)
+    ? parsedPrinterId
+    : null;
+  const isPrinterDetail = printerIdParam != null;
   const { resolvedMode, darkAccent, lightAccent } = useTheme();
   const activeAccent = resolvedMode === 'dark' ? darkAccent : lightAccent;
   const accentButtonClass = {
@@ -9048,6 +9197,28 @@ export function PrintersPage() {
     queryFn: () => api.getAssignments(),
     enabled: hasPermission('inventory:view_assignments'),
     staleTime: 30 * 1000,
+  });
+
+  const { data: materialSlotAssignments } = useQuery({
+    queryKey: ['material-slot-assignments'],
+    queryFn: () => api.getMaterialSlotAssignments(),
+    enabled: hasPermission('inventory:view_assignments'),
+    staleTime: 30 * 1000,
+  });
+
+  const unassignMaterialSlotMutation = useMutation({
+    mutationFn: ({
+      printerId,
+      materialSystemId,
+      slotId,
+    }: {
+      printerId: number;
+      materialSystemId: string;
+      slotId: string;
+    }) => api.unassignMaterialSlot(printerId, materialSystemId, slotId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['material-slot-assignments'] });
+    },
   });
 
   const unassignMutation = useMutation({
@@ -9762,17 +9933,109 @@ export function PrintersPage() {
     </>
   );
 
+  const detailPrinter = detailPrinterId == null
+    ? undefined
+    : printers?.find((printer) => printer.id === detailPrinterId);
+
+  const renderPrinterDetail = () => {
+    if (!detailPrinter) {
+      return (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-bambu-gray">
+              {t('printers.notFound', 'Printer not found')}
+            </p>
+            <RouterLink
+              to="/"
+              className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-bambu-green hover:text-bambu-green-light"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              {t('common.back', 'Back')}
+            </RouterLink>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return (
+      <div className="mx-auto w-full max-w-5xl">
+        <PrinterCard
+          printer={detailPrinter}
+          hideIfDisconnected={false}
+          maintenanceInfo={maintenanceByPrinter[detailPrinter.id]}
+          viewMode="expanded"
+          cardSize={2}
+          amsThresholds={settings ? {
+            humidityGood: Number(settings.ams_humidity_good) || 40,
+            humidityFair: Number(settings.ams_humidity_fair) || 60,
+            tempGood: Number(settings.ams_temp_good) || 28,
+            tempFair: Number(settings.ams_temp_fair) || 35,
+          } : undefined}
+          spoolmanEnabled={spoolmanEnabled}
+          hasUnlinkedSpools={hasUnlinkedSpools}
+          linkedSpools={linkedSpools}
+          spoolmanUrl={spoolmanStatus?.url}
+          spoolmanSyncMode={spoolmanSyncMode}
+          onGetAssignment={getAssignment}
+          onUnassignSpool={(pid, aid, tid) =>
+            unassignMutation.mutate({ printerId: pid, amsId: aid, trayId: tid })}
+          spoolmanSpools={spoolmanSpools}
+          spoolmanSlotAssignments={spoolmanSlotAssignments}
+          materialSlotAssignments={materialSlotAssignments}
+          spoolmanLoading={spoolmanSpoolsLoading || spoolmanAssignmentsLoading}
+          onUnassignSpoolmanSpool={(id) => unassignSpoolmanMutation.mutate(id)}
+          onUnassignMaterialSlot={(pid, systemId, slotId) =>
+            unassignMaterialSlotMutation.mutate({
+              printerId: pid,
+              materialSystemId: systemId,
+              slotId,
+            })}
+          timeFormat={settings?.time_format || 'system'}
+          cameraViewMode={settings?.camera_view_mode || 'window'}
+          onOpenEmbeddedCamera={(id, name) =>
+            setEmbeddedCameraPrinters(prev => new Map(prev).set(id, { id, name }))}
+          checkPrinterFirmware={settings?.check_printer_firmware !== false}
+          dryingPresets={effectiveDryingPresets}
+          nozzleTempPresets={effectiveNozzleTempPresets}
+          bedTempPresets={effectiveBedTempPresets}
+          chamberTempPresets={effectiveChamberTempPresets}
+          fanSpeedPresets={effectiveFanSpeedPresets}
+          requirePlateClear={settings?.require_plate_clear === true}
+          attachedCameraPosition={attachedCameraPositions[detailPrinter.id]}
+          onAttachedCameraPositionChange={(position) => {
+            setAttachedCameraPosition(detailPrinter.id, position);
+          }}
+        />
+      </div>
+    );
+  };
+
   return (
-    <div className="p-4 md:p-8">
+    <div className="p-3 sm:p-4 md:p-8">
       <div className="space-y-3 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-            <PrinterIcon className="w-7 h-7 text-bambu-green" />
-            {t('printers.title')}
-          </h1>
-          <StatusSummaryBar printers={printers} />
+          <div className="flex min-w-0 items-center gap-3">
+            {isPrinterDetail && (
+              <RouterLink
+                to="/"
+                aria-label={t('common.back', 'Back')}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-bambu-dark-tertiary bg-bambu-dark text-white transition-colors hover:border-bambu-green/50 hover:text-bambu-green"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </RouterLink>
+            )}
+            <h1 className="flex min-w-0 items-center gap-3 text-2xl font-bold text-white">
+              <PrinterIcon className="h-7 w-7 shrink-0 text-bambu-green" />
+              <span className="truncate">
+                {isPrinterDetail
+                  ? detailPrinter?.name ?? t('common.printer')
+                  : t('printers.title')}
+              </span>
+            </h1>
+          </div>
+          {!isPrinterDetail && <StatusSummaryBar printers={printers} />}
         </div>
-        <div ref={toolbarRef} className="relative flex items-center gap-2">
+        {!isPrinterDetail && <div ref={toolbarRef} className="relative flex items-center gap-2">
           {/* Only show search bar when printers exist */}
           {printers && printers.length > 0 && (
             <div className="relative min-w-0 flex-1">
@@ -9820,15 +10083,17 @@ export function PrintersPage() {
               <ToolbarMenu label={t('printers.toolbar.filters', 'Filters')} icon={<Filter className="w-4 h-4" />}>
                 <div className="flex w-48 flex-col gap-2">{renderFilterControls(true)}</div>
               </ToolbarMenu>
-              <ToolbarMenu label={t('printers.toolbar.view', 'View')} icon={<SlidersHorizontal className="w-4 h-4" />}>
-                <div className="flex w-48 flex-col gap-2">{renderViewControls(true)}</div>
-              </ToolbarMenu>
+              {!isMobile && (
+                <ToolbarMenu label={t('printers.toolbar.view', 'View')} icon={<SlidersHorizontal className="w-4 h-4" />}>
+                  <div className="flex w-48 flex-col gap-2">{renderViewControls(true)}</div>
+                </ToolbarMenu>
+              )}
               <ToolbarMenu label={t('printers.toolbar.actions', 'Actions')} icon={<MoreHorizontal className="w-4 h-4" />}>
                 <div className="flex w-48 flex-col gap-2">{renderActionControls(true)}</div>
               </ToolbarMenu>
             </div>
           )}
-        </div>
+        </div>}
       </div>
 
       {isLoading ? (
@@ -9847,12 +10112,44 @@ export function PrintersPage() {
             </Button>
           </CardContent>
         </Card>
+      ) : isPrinterDetail ? (
+        renderPrinterDetail()
       ) : sortedPrinters.length === 0 && (search.trim() || statusFilter !== 'all' || locationFilter !== 'all') ? (
         <Card>
           <CardContent className="text-center py-12">
             <p className="text-bambu-gray">{t('printers.noSearchResults')}</p>
           </CardContent>
         </Card>
+      ) : isMobile ? (
+        hasPermission('camera:view') ? (
+          <CameraWall
+            printers={sortedPrinters}
+            maxLive={Math.min(camWallMaxLive, 2)}
+            snapshotIntervalSec={camWallSnapshotSec}
+            onTileClick={(id) => navigate(`/printers/${id}`)}
+            statusMode="full"
+            onChangeMaxLive={() => {}}
+            onChangeSnapshotIntervalSec={() => {}}
+            onChangeStatusMode={() => {}}
+            showSettings={false}
+          />
+        ) : (
+          <div className="grid grid-cols-1 gap-3">
+            {sortedPrinters.map((printer) => (
+              <PrinterCard
+                key={printer.id}
+                printer={printer}
+                hideIfDisconnected={hideDisconnected}
+                maintenanceInfo={maintenanceByPrinter[printer.id]}
+                viewMode="compact"
+                cardSize={1}
+                checkPrinterFirmware={false}
+                requirePlateClear={settings?.require_plate_clear === true}
+                onOpenCompactCard={(id) => navigate(`/printers/${id}`)}
+              />
+            ))}
+          </div>
+        )
       ) : pageView === 'camwall' ? (
         <CameraWall
           printers={sortedPrinters}
@@ -9963,8 +10260,15 @@ export function PrintersPage() {
                       onUnassignSpool={(pid, aid, tid) => unassignMutation.mutate({ printerId: pid, amsId: aid, trayId: tid })}
                       spoolmanSpools={spoolmanSpools}
                       spoolmanSlotAssignments={spoolmanSlotAssignments}
+                      materialSlotAssignments={materialSlotAssignments}
                       spoolmanLoading={spoolmanSpoolsLoading || spoolmanAssignmentsLoading}
                       onUnassignSpoolmanSpool={(id) => unassignSpoolmanMutation.mutate(id)}
+                      onUnassignMaterialSlot={(pid, systemId, slotId) =>
+                        unassignMaterialSlotMutation.mutate({
+                          printerId: pid,
+                          materialSystemId: systemId,
+                          slotId,
+                        })}
                       timeFormat={settings?.time_format || 'system'}
                       cameraViewMode={settings?.camera_view_mode || 'window'}
                       onOpenEmbeddedCamera={(id, name) => setEmbeddedCameraPrinters(prev => new Map(prev).set(id, { id, name }))}
@@ -10010,8 +10314,15 @@ export function PrintersPage() {
               onUnassignSpool={(pid, aid, tid) => unassignMutation.mutate({ printerId: pid, amsId: aid, trayId: tid })}
               spoolmanSpools={spoolmanSpools}
               spoolmanSlotAssignments={spoolmanSlotAssignments}
+              materialSlotAssignments={materialSlotAssignments}
               spoolmanLoading={spoolmanSpoolsLoading || spoolmanAssignmentsLoading}
               onUnassignSpoolmanSpool={(id) => unassignSpoolmanMutation.mutate(id)}
+              onUnassignMaterialSlot={(pid, systemId, slotId) =>
+                unassignMaterialSlotMutation.mutate({
+                  printerId: pid,
+                  materialSystemId: systemId,
+                  slotId,
+                })}
               amsThresholds={settings ? {
                 humidityGood: Number(settings.ams_humidity_good) || 40,
                 humidityFair: Number(settings.ams_humidity_fair) || 60,

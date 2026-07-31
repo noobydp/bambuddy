@@ -143,6 +143,7 @@ async def test_engine():
         group,
         kprofile_note,
         maintenance,
+        material_slot_assignment,
         notification,
         notification_template,
         oidc_provider,

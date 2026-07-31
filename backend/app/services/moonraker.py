@@ -723,6 +723,39 @@ class MoonrakerClient:
                 for index, name in enumerate(tool_objects)
             ]
 
+        filament_sensor_names = sorted(
+            name for name in status if name.startswith(("filament_switch_sensor ", "filament_motion_sensor "))
+        )
+        material_slots: list[dict[str, Any]] = []
+        for index, extruder_name in enumerate(extruders):
+            sensor_name: str | None = None
+            indexed_marker = f"t{index}"
+            for candidate in filament_sensor_names:
+                candidate_tokens = re.split(r"[^a-z0-9]+", candidate.lower())
+                if indexed_marker in candidate_tokens:
+                    sensor_name = candidate
+                    break
+            if sensor_name is None and len(filament_sensor_names) == len(extruders):
+                sensor_name = filament_sensor_names[index]
+            elif sensor_name is None and len(extruders) == 1 and len(filament_sensor_names) == 1:
+                sensor_name = filament_sensor_names[0]
+
+            sensor_values = status.get(sensor_name, {}) if sensor_name else {}
+            occupied = bool(sensor_values.get("filament_detected")) if sensor_name else None
+            label = tools[index].get("label") if index < len(tools) else None
+            material_slots.append(
+                {
+                    "id": extruder_name,
+                    "label": label or f"Tool {index}",
+                    "occupied": occupied,
+                    "active": extruder_name == active_extruder,
+                    "material_type": None,
+                    "color": None,
+                    "remaining_percent": None,
+                    "sensor_id": sensor_name,
+                }
+            )
+
         macros = sorted(
             name.split(" ", 1)[1]
             for name in self._objects
@@ -766,7 +799,16 @@ class MoonrakerClient:
                     "kinematics": kinematics,
                     "leveling_method": leveling_method,
                 },
-                "material_systems": [],
+                "material_systems": [
+                    {
+                        "id": "toolheads",
+                        "name": "Toolheads",
+                        "kind": "toolheads",
+                        "slots": material_slots,
+                    }
+                ]
+                if material_slots
+                else [],
                 "device_info": {
                     "vendor": "Klipper",
                     "model": self.model,

@@ -9,6 +9,7 @@ import { render } from '../utils';
 import { AmsNamePopover, PrintersPage } from '../../pages/PrintersPage';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
+import { Route, Routes } from 'react-router-dom';
 
 const mockPrinters = [
   {
@@ -72,6 +73,18 @@ const selectToolbarDropdownOption = async (triggerName: RegExp, optionName: RegE
 
 describe('PrintersPage', () => {
   beforeEach(() => {
+    window.history.replaceState({}, '', '/');
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+    window.matchMedia = (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+    });
     vi.mocked(localStorage.getItem).mockReset();
     vi.mocked(localStorage.setItem).mockClear();
     vi.mocked(localStorage.removeItem).mockClear();
@@ -193,6 +206,111 @@ describe('PrintersPage', () => {
         // Status should be shown - may vary based on state
         expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
       });
+    });
+
+    it('shows manual filament assignments for discovered Klipper toolheads', async () => {
+      server.use(
+        http.get('/api/v1/printers/', () => HttpResponse.json([
+          {
+            ...mockPrinters[0],
+            id: 7,
+            name: 'TinyT',
+            provider: 'klipper',
+            model: 'Klipper',
+          },
+        ])),
+        http.get('/api/v1/printers/7/status', () => HttpResponse.json({
+          ...mockPrinterStatus,
+          id: 7,
+          name: 'TinyT',
+          provider: 'klipper',
+          material_systems: [
+            {
+              id: 'toolheads',
+              name: 'Toolheads',
+              kind: 'toolheads',
+              slots: [
+                {
+                  id: 'extruder',
+                  label: 'T0',
+                  occupied: true,
+                  active: true,
+                  sensor_id: 'filament_switch_sensor T0_Filament',
+                  material_type: null,
+                  color: null,
+                  remaining_percent: null,
+                },
+              ],
+            },
+          ],
+        })),
+        http.get('/api/v1/inventory/material-slot-assignments', () => HttpResponse.json([
+          {
+            id: 1,
+            printer_id: 7,
+            material_system_id: 'toolheads',
+            slot_id: 'extruder',
+            source: 'internal',
+            spool_id: 42,
+            spoolman_spool_id: null,
+            assigned_at: '2026-07-31T00:00:00Z',
+            spool: {
+              id: 42,
+              material: 'PLA',
+              subtype: 'Basic',
+              brand: 'Polymaker',
+              color_name: 'Red',
+              rgba: 'FF0000FF',
+              label_weight: 1000,
+              weight_used: 125,
+              archived_at: null,
+            },
+          },
+        ])),
+      );
+
+      render(<PrintersPage />);
+
+      expect(await screen.findByText('Toolheads')).toBeInTheDocument();
+      expect(screen.getByText('T0')).toBeInTheDocument();
+      expect(screen.getByText('PLA Basic')).toBeInTheDocument();
+    });
+
+    it('shows a camera-first fleet overview on mobile and opens printer details', async () => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+      window.matchMedia = (query: string) => ({
+        matches: query.includes('max-width: 767px'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => true,
+      });
+      const user = userEvent.setup();
+
+      render(<PrintersPage />);
+
+      expect(await screen.findByText('0 live, 0 snapshots, 2 total')).toBeInTheDocument();
+      expect(screen.queryByTestId('printer-card-stack-1')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /X1 Carbon/i }));
+      expect(window.location.pathname).toBe('/printers/1');
+    });
+
+    it('renders the full current printer card on a printer detail route', async () => {
+      window.history.replaceState({}, '', '/printers/1');
+
+      render(
+        <Routes>
+          <Route path="/printers/:printerId" element={<PrintersPage />} />
+        </Routes>
+      );
+
+      expect(await screen.findByTestId('printer-card-stack-1')).toBeInTheDocument();
+      expect(screen.queryByTestId('printer-card-stack-2')).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Back' })).toHaveAttribute('href', '/');
     });
 
     it('attaches a camera below the selected printer card and can move it above', async () => {

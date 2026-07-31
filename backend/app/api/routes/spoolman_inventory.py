@@ -36,6 +36,7 @@ from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.core.websocket import ws_manager
 from backend.app.models.ams_label import AmsLabel
+from backend.app.models.material_slot_assignment import MaterialSlotAssignment
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
 from backend.app.models.spoolman_k_profile import SpoolmanKProfile
@@ -885,6 +886,13 @@ async def delete_spool(
     client = await _get_client(db)
     async with _translate_spoolman_errors():
         await client.delete_spool(spool_id)
+    await db.execute(
+        delete(MaterialSlotAssignment).where(
+            MaterialSlotAssignment.source == "spoolman",
+            MaterialSlotAssignment.spoolman_spool_id == spool_id,
+        )
+    )
+    await db.commit()
     await ws_manager.broadcast({"type": "inventory_changed"})
     return {"status": "deleted"}
 
@@ -1012,6 +1020,12 @@ async def bulk_delete_spools(
         try:
             async with _translate_spoolman_errors():
                 await client.delete_spool(sid)
+            await db.execute(
+                delete(MaterialSlotAssignment).where(
+                    MaterialSlotAssignment.source == "spoolman",
+                    MaterialSlotAssignment.spoolman_spool_id == sid,
+                )
+            )
             deleted += 1
         except HTTPException as exc:
             errors.append({"id": sid, "status": exc.status_code, "detail": exc.detail})
@@ -1019,6 +1033,7 @@ async def bulk_delete_spools(
             logger.exception("Spoolman bulk-delete failed for spool %s", sid)
             errors.append({"id": sid, "status": 500, "detail": str(exc)})
     if deleted:
+        await db.commit()
         await ws_manager.broadcast({"type": "inventory_changed"})
     return {"deleted": deleted, "errors": errors}
 

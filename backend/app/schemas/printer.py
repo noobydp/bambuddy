@@ -402,13 +402,14 @@ class PrinterMotionStatus(BaseModel):
 
 
 class MaterialSlotStatus(BaseModel):
-    id: int
+    id: str
     label: str
     occupied: bool | None = None
     active: bool = False
     material_type: str | None = None
     color: str | None = None
     remaining_percent: int | None = None
+    sensor_id: str | None = None
 
 
 class MaterialSystemStatus(BaseModel):

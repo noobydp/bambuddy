@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Visual variant applied to a spool's swatch — purely cosmetic, does not
 # affect MQTT/firmware. Kept independent of `subtype` so users can override
@@ -242,6 +243,38 @@ class SpoolAssignmentResponse(BaseModel):
     configured: bool = False
     pending_config: bool = False  # True when slot was empty at assign time; will configure on insert
     ams_label: str | None = None  # User-defined friendly name for the AMS unit
+
+    class Config:
+        from_attributes = True
+
+
+class MaterialSlotAssignmentCreate(BaseModel):
+    printer_id: int
+    material_system_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    slot_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.: -]+$")
+    source: Literal["internal", "spoolman"]
+    spool_id: int | None = None
+    spoolman_spool_id: int | None = None
+
+    @model_validator(mode="after")
+    def validate_source_id(self):
+        if self.source == "internal" and (self.spool_id is None or self.spoolman_spool_id is not None):
+            raise ValueError("Internal assignments require spool_id only")
+        if self.source == "spoolman" and (self.spoolman_spool_id is None or self.spool_id is not None):
+            raise ValueError("Spoolman assignments require spoolman_spool_id only")
+        return self
+
+
+class MaterialSlotAssignmentResponse(BaseModel):
+    id: int
+    printer_id: int
+    material_system_id: str
+    slot_id: str
+    source: Literal["internal", "spoolman"]
+    spool_id: int | None = None
+    spoolman_spool_id: int | None = None
+    assigned_at: datetime
+    spool: SpoolResponse | None = None
 
     class Config:
         from_attributes = True

@@ -260,6 +260,7 @@ async def init_db():
         location,
         long_lived_token,
         maintenance,
+        material_slot_assignment,
         notification,
         notification_template,
         oidc_provider,

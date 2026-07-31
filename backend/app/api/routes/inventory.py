@@ -22,6 +22,8 @@ from backend.app.core.websocket import ws_manager
 from backend.app.models.ams_label import AmsLabel
 from backend.app.models.color_catalog import ColorCatalogEntry
 from backend.app.models.location import Location
+from backend.app.models.material_slot_assignment import MaterialSlotAssignment
+from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
 from backend.app.models.spool import Spool
 from backend.app.models.spool_assignment import SpoolAssignment
@@ -30,6 +32,8 @@ from backend.app.models.spool_k_profile import SpoolKProfile
 from backend.app.models.user import User
 from backend.app.schemas.location import LocationCreate, LocationResponse, LocationUpdate
 from backend.app.schemas.spool import (
+    MaterialSlotAssignmentCreate,
+    MaterialSlotAssignmentResponse,
     SpoolAssignmentCreate,
     SpoolAssignmentResponse,
     SpoolBulkCreate,
@@ -60,7 +64,13 @@ from backend.app.services.spool_csv import (
     parse_and_validate,
     serialize,
 )
-from backend.app.services.spoolman import SpoolmanClient, get_spoolman_client, init_spoolman_client
+from backend.app.services.spoolman import (
+    SpoolmanClient,
+    SpoolmanNotFoundError,
+    SpoolmanUnavailableError,
+    get_spoolman_client,
+    init_spoolman_client,
+)
 from backend.app.utils.filament_ids import (
     GENERIC_FILAMENT_IDS,
     MATERIAL_TEMPS,
@@ -1340,6 +1350,7 @@ async def delete_spool(
     if not spool:
         raise HTTPException(404, "Spool not found")
 
+    await db.execute(delete(MaterialSlotAssignment).where(MaterialSlotAssignment.spool_id == spool_id))
     await db.delete(spool)
     await db.commit()
     await ws_manager.broadcast({"type": "inventory_changed"})
@@ -1506,6 +1517,7 @@ async def bulk_delete_spools(
     found_ids = {s.id for s in spools}
     not_found = [sid for sid in payload.ids if sid not in found_ids]
     for spool in spools:
+        await db.execute(delete(MaterialSlotAssignment).where(MaterialSlotAssignment.spool_id == spool.id))
         await db.delete(spool)
     await db.commit()
     if spools:
@@ -1903,6 +1915,144 @@ async def unassign_spool(
         }
     )
 
+    return {"status": "deleted"}
+
+
+# ── Provider-neutral material slot assignments ───────────────────────────────
+
+
+def _material_slot_exists(printer_id: int, material_system_id: str, slot_id: str) -> bool:
+    """Check the provider's last discovered snapshot without talking to hardware."""
+    from backend.app.services.printer_manager import printer_manager
+
+    state = printer_manager.get_status(printer_id)
+    snapshot = ((state.raw_data or {}).get("provider_snapshot") or {}) if state else {}
+    for system in snapshot.get("material_systems") or []:
+        if str(system.get("id")) != material_system_id:
+            continue
+        return any(str(slot.get("id")) == slot_id for slot in system.get("slots") or [])
+    return False
+
+
+@router.get("/material-slot-assignments", response_model=list[MaterialSlotAssignmentResponse])
+async def list_material_slot_assignments(
+    printer_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_VIEW_ASSIGNMENTS),
+):
+    """List manual assignments for provider-neutral material slots."""
+    query = select(MaterialSlotAssignment).options(
+        selectinload(MaterialSlotAssignment.spool).selectinload(Spool.k_profiles)
+    )
+    if printer_id is not None:
+        query = query.where(MaterialSlotAssignment.printer_id == printer_id)
+    result = await db.execute(query)
+    return list(result.scalars().all())
+
+
+@router.post("/material-slot-assignments", response_model=MaterialSlotAssignmentResponse)
+async def assign_material_slot(
+    data: MaterialSlotAssignmentCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_UPDATE),
+):
+    """Assign inventory metadata to a discovered slot without commanding a printer."""
+    printer = (await db.execute(select(Printer).where(Printer.id == data.printer_id))).scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    if not _material_slot_exists(data.printer_id, data.material_system_id, data.slot_id):
+        raise HTTPException(409, "Material slot is not currently exposed by this printer")
+
+    spool: Spool | None = None
+    if data.source == "internal":
+        spool = (
+            await db.execute(select(Spool).options(selectinload(Spool.k_profiles)).where(Spool.id == data.spool_id))
+        ).scalar_one_or_none()
+        if not spool:
+            raise HTTPException(404, "Spool not found")
+        if spool.archived_at:
+            raise HTTPException(400, "Cannot assign an archived spool")
+    else:
+        client = await get_spoolman_client()
+        if client is None:
+            raise HTTPException(503, "Spoolman is not connected")
+        try:
+            await client.get_spool(data.spoolman_spool_id)
+        except SpoolmanNotFoundError as exc:
+            raise HTTPException(404, "Spoolman spool not found") from exc
+        except SpoolmanUnavailableError as exc:
+            raise HTTPException(503, "Spoolman is not reachable") from exc
+
+    existing = (
+        await db.execute(
+            select(MaterialSlotAssignment).where(
+                MaterialSlotAssignment.printer_id == data.printer_id,
+                MaterialSlotAssignment.material_system_id == data.material_system_id,
+                MaterialSlotAssignment.slot_id == data.slot_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing:
+        await db.delete(existing)
+        await db.flush()
+
+    assignment = MaterialSlotAssignment(
+        printer_id=data.printer_id,
+        material_system_id=data.material_system_id,
+        slot_id=data.slot_id,
+        source=data.source,
+        spool_id=data.spool_id,
+        spoolman_spool_id=data.spoolman_spool_id,
+    )
+    db.add(assignment)
+    await db.commit()
+    result = await db.execute(
+        select(MaterialSlotAssignment)
+        .options(selectinload(MaterialSlotAssignment.spool).selectinload(Spool.k_profiles))
+        .where(MaterialSlotAssignment.id == assignment.id)
+    )
+    response = result.scalar_one()
+    await ws_manager.broadcast(
+        {
+            "type": "material_slot_assignment_changed",
+            "printer_id": data.printer_id,
+            "material_system_id": data.material_system_id,
+            "slot_id": data.slot_id,
+        }
+    )
+    return response
+
+
+@router.delete("/material-slot-assignments/{printer_id}/{material_system_id}/{slot_id}")
+async def unassign_material_slot(
+    printer_id: int,
+    material_system_id: str,
+    slot_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_UPDATE),
+):
+    """Remove a manual material-slot assignment without commanding a printer."""
+    assignment = (
+        await db.execute(
+            select(MaterialSlotAssignment).where(
+                MaterialSlotAssignment.printer_id == printer_id,
+                MaterialSlotAssignment.material_system_id == material_system_id,
+                MaterialSlotAssignment.slot_id == slot_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(404, "Assignment not found")
+    await db.delete(assignment)
+    await db.commit()
+    await ws_manager.broadcast(
+        {
+            "type": "material_slot_assignment_changed",
+            "printer_id": printer_id,
+            "material_system_id": material_system_id,
+            "slot_id": slot_id,
+        }
+    )
     return {"status": "deleted"}
 
 

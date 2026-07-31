@@ -48,6 +48,13 @@ def test_tinyt_maps_tools_sensors_motion_and_capabilities() -> None:
     assert snapshot["device_info"]["remaining_disk_gb"] == 10.8
     assert snapshot["device_info"]["mcu_count"] == 3
     assert snapshot["device_info"]["toolchanger_ready"] is True
+    toolheads = snapshot["material_systems"][0]
+    assert toolheads["id"] == "toolheads"
+    assert [(slot["id"], slot["label"], slot["occupied"], slot["active"]) for slot in toolheads["slots"]] == [
+        ("extruder", "T0", True, True),
+        ("extruder1", "T1", False, False),
+    ]
+    assert toolheads["slots"][0]["sensor_id"] == "filament_switch_sensor toolhead_T0"
     assert {sensor["label"] for sensor in snapshot["sensors"]} >= {
         "Toolhead T0",
         "Toolhead T1",
@@ -69,6 +76,25 @@ def test_trident_maps_qgl_single_tool_and_unhomed_state() -> None:
     assert snapshot["device_info"]["build_volume"] == "424 × 416 × 360 mm"
     assert snapshot["device_info"]["remaining_disk_gb"] == 9.5
     assert snapshot["device_info"]["toolchanger_ready"] is None
+    assert snapshot["material_systems"] == [
+        {
+            "id": "toolheads",
+            "name": "Toolheads",
+            "kind": "toolheads",
+            "slots": [
+                {
+                    "id": "extruder",
+                    "label": "Extruder",
+                    "occupied": True,
+                    "active": True,
+                    "material_type": None,
+                    "color": None,
+                    "remaining_percent": None,
+                    "sensor_id": "filament_switch_sensor toolhead",
+                }
+            ],
+        }
+    ]
 
 
 def test_verified_web_ui_is_added_to_provider_snapshot() -> None:

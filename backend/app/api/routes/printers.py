@@ -633,6 +633,7 @@ async def delete_printer(
 
     from backend.app.models.archive import PrintArchive
     from backend.app.models.maintenance import MaintenanceHistory, PrinterMaintenance
+    from backend.app.models.material_slot_assignment import MaterialSlotAssignment
     from backend.app.models.spoolman_slot_assignment import SpoolmanSlotAssignment
 
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
@@ -653,6 +654,7 @@ async def delete_printer(
 
     # Delete slot assignments for this printer (SQLite doesn't enforce FK cascades)
     await db.execute(sql_delete(SpoolmanSlotAssignment).where(SpoolmanSlotAssignment.printer_id == printer_id))
+    await db.execute(sql_delete(MaterialSlotAssignment).where(MaterialSlotAssignment.printer_id == printer_id))
 
     # Delete maintenance history and items for this printer
     # (SQLite doesn't enforce FK cascades, so do it explicitly)

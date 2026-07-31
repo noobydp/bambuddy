@@ -343,6 +343,10 @@ export function useWebSocket() {
         debouncedInvalidate('slotPresets');
         break;
 
+      case 'material_slot_assignment_changed':
+        debouncedInvalidate('material-slot-assignments');
+        break;
+
       case 'spool_assignment_verified': {
         // #2582: the backend read the AMS telemetry back after an assignment
         // and either confirmed the tray accepted it or timed out. Toast the

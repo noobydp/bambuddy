@@ -688,13 +688,14 @@ export interface PrinterMotionStatus {
 }
 
 export interface MaterialSlotStatus {
-  id: number;
+  id: string;
   label: string;
   occupied: boolean | null;
   active: boolean;
   material_type: string | null;
   color: string | null;
   remaining_percent: number | null;
+  sensor_id?: string | null;
 }
 
 export interface MaterialSystemStatus {
@@ -3271,6 +3272,18 @@ export interface SpoolAssignment {
   ams_label?: string | null;  // User-defined friendly name for the AMS unit
 }
 
+export interface MaterialSlotAssignment {
+  id: number;
+  printer_id: number;
+  material_system_id: string;
+  slot_id: string;
+  source: 'internal' | 'spoolman';
+  spool_id: number | null;
+  spoolman_spool_id: number | null;
+  assigned_at: string;
+  spool?: InventorySpool | null;
+}
+
 export interface FilamentSkuSettings {
   id: number;
   material: string;
@@ -5726,6 +5739,27 @@ export const api = {
     }),
   unassignSpool: (printerId: number, amsId: number, trayId: number) =>
     request<{ status: string }>(`/inventory/assignments/${printerId}/${amsId}/${trayId}`, { method: 'DELETE' }),
+  getMaterialSlotAssignments: (printerId?: number) =>
+    request<MaterialSlotAssignment[]>(
+      `/inventory/material-slot-assignments${printerId ? `?printer_id=${printerId}` : ''}`,
+    ),
+  assignMaterialSlot: (data: {
+    printer_id: number;
+    material_system_id: string;
+    slot_id: string;
+    source: 'internal' | 'spoolman';
+    spool_id?: number;
+    spoolman_spool_id?: number;
+  }) =>
+    request<MaterialSlotAssignment>('/inventory/material-slot-assignments', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  unassignMaterialSlot: (printerId: number, materialSystemId: string, slotId: string) =>
+    request<{ status: string }>(
+      `/inventory/material-slot-assignments/${printerId}/${encodeURIComponent(materialSystemId)}/${encodeURIComponent(slotId)}`,
+      { method: 'DELETE' },
+    ),
   // ── Spool label printing (#809) ──────────────────────────────────────────
   // Both endpoints return application/pdf. Frontend opens the resulting Blob
   // in a new tab so the user can print or save from the browser's PDF viewer.
