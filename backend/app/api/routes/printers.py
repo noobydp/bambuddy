@@ -181,7 +181,9 @@ async def _require_flashforge_finished_client(
     if not await asyncio.to_thread(client.request_status_update):
         raise HTTPException(409, "Could not refresh FlashForge printer status")
     if client.state.state != "FINISH":
-        raise HTTPException(409, f"FlashForge printer is not awaiting finished-job acknowledgment (state={client.state.state})")
+        raise HTTPException(
+            409, f"FlashForge printer is not awaiting finished-job acknowledgment (state={client.state.state})"
+        )
     return printer, client
 
 
