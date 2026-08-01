@@ -1989,6 +1989,7 @@ function PrinterCard({
   const [amsBackupModalOpen, setAmsBackupModalOpen] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [showEmergencyStopConfirm, setShowEmergencyStopConfirm] = useState(false);
+  const [showFlashForgeReprintConfirm, setShowFlashForgeReprintConfirm] = useState(false);
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState<number | null>(null);
   const [showAirductMenu, setShowAirductMenu] = useState<number | null>(null);
@@ -2420,7 +2421,7 @@ function PrinterCard({
     && status?.connected === true
     && status.state === 'FINISH';
   const showFinishedPlateState = needsPlateClear || isFlashForgeFinished;
-  const showClearPlateButton = status?.connected && needsPlateClear && !isPrintingOrPaused;
+  const showClearPlateButton = status?.connected && needsPlateClear && !isPrintingOrPaused && !isFlashForgeFinished;
   const activePrintName = status?.current_print && isPrintingOrPaused
     ? formatPrintName(status.subtask_name || status.current_print || null, status.gcode_file, t, activePlateLabel)
     : null;
@@ -2436,7 +2437,7 @@ function PrinterCard({
     if (!status?.connected) return null;
     if (isFlashForgeFinished) {
       return {
-        label: t('printers.plateStatus.notCleared'),
+        label: t('printers.flashforge.finishedClearPlate', 'Finished. Clear Plate'),
         className: 'bg-yellow-100 dark:bg-yellow-500/20 text-yellow-700 dark:text-yellow-400',
       };
     }
@@ -2628,6 +2629,30 @@ function PrinterCard({
       queryClient.invalidateQueries({ queryKey: ['queue', printer.id] });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
+  });
+
+  const clearFlashForgeFinishedMutation = useMutation({
+    mutationFn: () => api.clearFlashForgeFinishedJob(printer.id),
+    onSuccess: (result) => {
+      showToast(result.message, 'success');
+      queryClient.setQueryData(['printerStatus', printer.id], (old: PrinterStatus | undefined) =>
+        old ? { ...old, state: 'IDLE', awaiting_plate_clear: false } : old
+      );
+      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: ['queue', printer.id] });
+    },
+    onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
+  });
+
+  const reprintFlashForgeFinishedMutation = useMutation({
+    mutationFn: () => api.reprintFlashForgeFinishedJob(printer.id),
+    onSuccess: (result) => {
+      showToast(result.message, 'success');
+      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: ['queue', printer.id] });
+    },
+    onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
+    onSettled: () => setShowFlashForgeReprintConfirm(false),
   });
 
   const nozzleTemperatureMutation = useMutation({
@@ -3703,13 +3728,28 @@ function PrinterCard({
                     </button>
                   )}
                   {viewMode === 'compact' && isFlashForgeFinished && !showClearPlateButton && (
-                    <span
-                      className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border border-yellow-300 bg-yellow-100 text-yellow-700 dark:border-yellow-400/40 dark:bg-yellow-500/20 dark:text-yellow-400"
-                      aria-label={t('printers.plateStatus.notCleared')}
-                      title={t('printers.plateStatus.notCleared')}
-                    >
-                      <PlateClearedIcon className="h-3 w-3" />
-                    </span>
+                    <div className="flex flex-shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => clearFlashForgeFinishedMutation.mutate()}
+                        disabled={clearFlashForgeFinishedMutation.isPending || !hasPermission('printers:control')}
+                        className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-yellow-300 bg-yellow-100 text-yellow-700 transition-colors hover:bg-yellow-500/30 disabled:opacity-50 dark:border-yellow-400/40 dark:bg-yellow-500/20 dark:text-yellow-400"
+                        aria-label={t('printers.flashforge.clearFinished', 'Clear finished job')}
+                        title={t('printers.flashforge.clearFinished', 'Clear finished job')}
+                      >
+                        {clearFlashForgeFinishedMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowFlashForgeReprintConfirm(true)}
+                        disabled={reprintFlashForgeFinishedMutation.isPending || !hasPermission('printers:control')}
+                        className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-bambu-green/40 bg-bambu-green/15 text-bambu-green transition-colors hover:bg-bambu-green/25 disabled:opacity-50"
+                        aria-label={t('printers.flashforge.reprintFinished', 'Reprint finished job')}
+                        title={t('printers.flashforge.reprintFinished', 'Reprint finished job')}
+                      >
+                        <Repeat className="h-3 w-3" />
+                      </button>
+                    </div>
                   )}
                 </div>
                 <p className="text-sm text-bambu-gray">
@@ -4662,6 +4702,31 @@ function PrinterCard({
                 </div>
               );
             })()}
+
+            {viewMode === 'expanded' && isFlashForgeFinished && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => clearFlashForgeFinishedMutation.mutate()}
+                  disabled={clearFlashForgeFinishedMutation.isPending || !hasPermission('printers:control')}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-yellow-300 bg-yellow-100 px-3 py-1.5 text-xs font-medium text-yellow-700 transition-colors hover:bg-yellow-500/30 disabled:opacity-50 dark:border-yellow-400/40 dark:bg-yellow-500/20 dark:text-yellow-400"
+                  title={!hasPermission('printers:control') ? t('printers.permission.noControl') : t('printers.flashforge.clearFinished', 'Clear finished job')}
+                >
+                  {clearFlashForgeFinishedMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                  {t('printers.flashforge.clearOk', 'Clear / OK')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFlashForgeReprintConfirm(true)}
+                  disabled={reprintFlashForgeFinishedMutation.isPending || !hasPermission('printers:control')}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-bambu-green/40 bg-bambu-green/15 px-3 py-1.5 text-xs font-medium text-bambu-green transition-colors hover:bg-bambu-green/25 disabled:opacity-50"
+                  title={!hasPermission('printers:control') ? t('printers.permission.noControl') : t('printers.flashforge.reprintFinished', 'Reprint finished job')}
+                >
+                  <Repeat className="h-4 w-4" />
+                  {t('printers.flashforge.reprint', 'Reprint')}
+                </button>
+              </div>
+            )}
 
             {viewMode === 'expanded' && showClearPlateButton && (
               <button
@@ -6938,6 +7003,22 @@ function PrinterCard({
           isLoading={emergencyStopMutation.isPending}
           onConfirm={() => emergencyStopMutation.mutate()}
           onCancel={() => setShowEmergencyStopConfirm(false)}
+        />
+      )}
+
+      {showFlashForgeReprintConfirm && (
+        <ConfirmModal
+          title={t('printers.flashforge.reprintConfirmTitle', 'Reprint the completed job?')}
+          message={t(
+            'printers.flashforge.reprintConfirmMessage',
+            'This clears the finished screen and immediately starts the same stored file again. Confirm the build plate is clear before continuing.',
+          )}
+          confirmText={t('printers.flashforge.reprint', 'Reprint')}
+          loadingText={t('printers.flashforge.reprinting', 'Starting reprint...')}
+          variant="danger"
+          isLoading={reprintFlashForgeFinishedMutation.isPending}
+          onConfirm={() => reprintFlashForgeFinishedMutation.mutate()}
+          onCancel={() => setShowFlashForgeReprintConfirm(false)}
         />
       )}
 

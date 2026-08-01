@@ -10,6 +10,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
+from backend.app.services.flashforge_local import FlashForgeLocalClient
+
 
 @pytest.fixture(autouse=True)
 def _mock_printer_test_connection():
@@ -2590,6 +2592,96 @@ class TestClearHMSErrorsAPI:
 
             assert response.status_code == 500
             assert "failed" in response.json()["detail"].lower()
+
+
+class TestFlashForgeFinishedJobAPI:
+    """FlashForge-only completed-job acknowledgment and reprint controls."""
+
+    @staticmethod
+    def _finished_client() -> FlashForgeLocalClient:
+        client = FlashForgeLocalClient("192.0.2.211", "SN123", "code", model="Creator 5 Pro")
+        client.state.connected = True
+        client.state.state = "FINISH"
+        client.state.gcode_file = "last-job.gcode.3mf"
+        client.request_status_update = MagicMock(return_value=True)
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_clear_finished_job_uses_flashforge_client(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(
+            name="Creator",
+            provider="flashforge",
+            model="FlashForge Creator 5 Pro",
+        )
+        client = self._finished_client()
+        client.clear_finished_job_and_wait = MagicMock(return_value=True)
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = client
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/flashforge/finished/clear")
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        client.clear_finished_job_and_wait.assert_called_once()
+        mock_pm.set_awaiting_plate_clear.assert_called_once_with(printer.id, False)
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_reprint_finished_job_requires_confirmation_route_and_stored_file(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+    ):
+        printer = await printer_factory(
+            name="Creator",
+            provider="flashforge",
+            model="FlashForge Creator 5 Pro",
+        )
+        client = self._finished_client()
+        client.reprint_finished_job = MagicMock(return_value=True)
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = client
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/flashforge/finished/reprint")
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "Reprint started: last-job.gcode.3mf"
+        client.reprint_finished_job.assert_called_once()
+        mock_pm.set_awaiting_plate_clear.assert_called_once_with(printer.id, False)
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_finished_job_controls_fail_closed_for_non_flashforge(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+    ):
+        printer = await printer_factory(name="Bambu", provider="bambu", model="X1C")
+        response = await async_client.post(f"/api/v1/printers/{printer.id}/flashforge/finished/clear")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_finished_job_controls_require_live_finish_state(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+    ):
+        printer = await printer_factory(
+            name="Creator",
+            provider="flashforge",
+            model="FlashForge Creator 5 Pro",
+        )
+        client = self._finished_client()
+        client.state.state = "IDLE"
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = client
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/flashforge/finished/clear")
+
+        assert response.status_code == 409
+        assert "not awaiting" in response.json()["detail"].lower()
 
 
 class TestExecuteHMSActionAPI:

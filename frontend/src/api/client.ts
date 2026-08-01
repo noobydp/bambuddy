@@ -4078,6 +4078,14 @@ export const api = {
     request<{ success: boolean; message: string }>(`/printers/${printerId}/clear-plate`, {
       method: 'POST',
     }),
+  clearFlashForgeFinishedJob: (printerId: number) =>
+    request<{ success: boolean; message: string }>(`/printers/${printerId}/flashforge/finished/clear`, {
+      method: 'POST',
+    }),
+  reprintFlashForgeFinishedJob: (printerId: number) =>
+    request<{ success: boolean; message: string }>(`/printers/${printerId}/flashforge/finished/reprint`, {
+      method: 'POST',
+    }),
 
   // Get current print user (for reprint tracking - Issue #206)
   getCurrentPrintUser: (printerId: number) =>

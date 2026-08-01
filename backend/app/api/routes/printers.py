@@ -163,6 +163,28 @@ async def _require_klipper_client(printer_id: int, db: AsyncSession) -> tuple[Pr
     return printer, client
 
 
+async def _require_flashforge_finished_client(
+    printer_id: int,
+    db: AsyncSession,
+) -> tuple[Printer, FlashForgeLocalClient]:
+    """Return a connected Creator 5 client whose live state is completed."""
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    if not _is_flashforge_printer(printer):
+        raise HTTPException(404, "FlashForge finished-job controls are not available for this printer")
+
+    client = printer_manager.get_client(printer_id)
+    if not isinstance(client, FlashForgeLocalClient) or not client.state.connected:
+        raise HTTPException(409, "FlashForge printer is not connected")
+    if not await asyncio.to_thread(client.request_status_update):
+        raise HTTPException(409, "Could not refresh FlashForge printer status")
+    if client.state.state != "FINISH":
+        raise HTTPException(409, f"FlashForge printer is not awaiting finished-job acknowledgment (state={client.state.state})")
+    return printer, client
+
+
 def _printer_capabilities(provider: str | None, model: str | None, state=None) -> PrinterCapabilities:
     provider = normalize_printer_provider(provider, model)
     if provider == PROVIDER_KLIPPER:
@@ -3697,6 +3719,37 @@ async def clear_plate(
     printer_manager.set_awaiting_plate_clear(printer_id, False)
 
     return {"success": True, "message": "Plate cleared, next print will start shortly"}
+
+
+@router.post("/{printer_id}/flashforge/finished/clear")
+async def clear_flashforge_finished_job(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dismiss the Creator 5 completed-print screen through its LAN API."""
+    _, client = await _require_flashforge_finished_client(printer_id, db)
+    if not await asyncio.to_thread(client.clear_finished_job_and_wait):
+        raise HTTPException(502, "FlashForge did not return to ready after clearing the finished job")
+    printer_manager.set_awaiting_plate_clear(printer_id, False)
+    return {"success": True, "message": "Finished job cleared; printer is ready"}
+
+
+@router.post("/{printer_id}/flashforge/finished/reprint")
+async def reprint_flashforge_finished_job(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear the Creator 5 finished state and restart its stored completed file."""
+    _, client = await _require_flashforge_finished_client(printer_id, db)
+    filename = client.state.gcode_file
+    if not filename:
+        raise HTTPException(409, "The completed FlashForge job has no stored filename to reprint")
+    if not await asyncio.to_thread(client.reprint_finished_job):
+        raise HTTPException(502, "FlashForge could not clear and reprint the completed job")
+    printer_manager.set_awaiting_plate_clear(printer_id, False)
+    return {"success": True, "message": f"Reprint started: {filename}"}
 
 
 @router.post("/{printer_id}/print/pause")

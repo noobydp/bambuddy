@@ -421,6 +421,16 @@ export default {
       notCleared: 'Plate not Clear',
       inUse: 'Plate in Use',
     },
+    flashforge: {
+      finishedClearPlate: 'Finished. Clear Plate',
+      clearFinished: 'Clear finished job',
+      clearOk: 'Clear / OK',
+      reprintFinished: 'Reprint finished job',
+      reprint: 'Reprint',
+      reprintConfirmTitle: 'Reprint the completed job?',
+      reprintConfirmMessage: 'This clears the finished screen and immediately starts the same stored file again. Confirm the build plate is clear before continuing.',
+      reprinting: 'Starting reprint...',
+    },
     // Queue info
     queue: {
       inQueue: '{{count}} print in queue',

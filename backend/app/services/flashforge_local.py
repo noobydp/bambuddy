@@ -26,6 +26,8 @@ DEFAULT_FLASHFORGE_PORT = 8898
 DEFAULT_FLASHFORGE_MOONRAKER_PORT = 7125
 FLASHFORGE_POLL_INTERVAL_SECONDS = 10.0
 FLASHFORGE_STALE_AFTER_SECONDS = 45.0
+FLASHFORGE_FINISH_CLEAR_TIMEOUT_SECONDS = 5.0
+FLASHFORGE_FINISH_CLEAR_POLL_SECONDS = 0.25
 FLASHFORGE_JOB_CONTROL_CMD = "jobCtl_cmd"
 FLASHFORGE_STATE_CONTROL_CMD = "stateCtrl_cmd"
 FLASHFORGE_LIGHT_CONTROL_CMD = "lightControl_cmd"
@@ -373,7 +375,57 @@ class FlashForgeLocalClient:
         return self._send_job_control("continue")
 
     def clear_hms_errors(self) -> bool:
+        # Creator 5 firmware uses the same state-reset operation for dismissing
+        # recoverable errors and acknowledging its completed-print dialog.
+        return self.clear_finished_job()
+
+    def clear_finished_job(self) -> bool:
+        """Acknowledge the Creator 5 completed-print screen and return to ready."""
         return self._send_control_command(FLASHFORGE_STATE_CONTROL_CMD, {"action": "setClearPlatform"})
+
+    def clear_finished_job_and_wait(self) -> bool:
+        """Acknowledge a completed job and confirm the firmware returned to ready."""
+        if not self.clear_finished_job():
+            return False
+        return self._wait_for_ready_after_finished_job()
+
+    def reprint_finished_job(self) -> bool:
+        """Start the just-completed file again through the verified LAN API.
+
+        Creator 5 firmware does not expose its touchscreen ``Print Again``
+        handler as a LAN command. Its ``/printGcode`` endpoint only accepts a
+        new job while the machine is ready, so a remote reprint must first
+        acknowledge the completed state, wait for ``/detail`` to report ready,
+        then start the same stored filename. Bed levelling stays off to match
+        the touchscreen reprint path, which reuses the completed job directly.
+        """
+        detail = self._fetch_detail()
+        if not detail or _normalize_state(detail.get("status")) != "FINISH":
+            return False
+
+        raw_filename = detail.get("printFileName") or detail.get("currentPrintFile") or detail.get("fileName")
+        if not raw_filename:
+            return False
+        filename = _remote_filename(raw_filename)
+        if not self.clear_finished_job_and_wait():
+            return False
+        return self.start_print(filename, bed_levelling=False)
+
+    def _wait_for_ready_after_finished_job(self) -> bool:
+        deadline = time.monotonic() + FLASHFORGE_FINISH_CLEAR_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            refreshed = self._fetch_detail()
+            if refreshed:
+                self._apply_detail(refreshed)
+                if _normalize_state(refreshed.get("status")) == "IDLE":
+                    return True
+            time.sleep(FLASHFORGE_FINISH_CLEAR_POLL_SECONDS)
+
+        logger.warning(
+            "FlashForge did not become ready after clearing completed job for %s",
+            self.ip_address,
+        )
+        return False
 
     def set_chamber_light(self, on: bool) -> bool:
         return self._send_control_command(FLASHFORGE_LIGHT_CONTROL_CMD, {"status": "open" if on else "close"})

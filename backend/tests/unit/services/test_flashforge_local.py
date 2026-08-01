@@ -351,6 +351,72 @@ def test_flashforge_job_control_commands_use_local_control_endpoint():
     assert all(call[1]["payload"]["cmd"] == "jobCtl_cmd" for call in calls)
 
 
+def test_flashforge_clear_finished_job_uses_state_control_endpoint():
+    client = FlashForgeLocalClient("192.0.2.211", "SN123", "code", model="Creator 5 Pro")
+    calls = []
+
+    def fake_post(path, payload, timeout=5):
+        calls.append((path, payload, timeout))
+        return {"code": 0}
+
+    client._post_json = fake_post
+
+    assert client.clear_finished_job() is True
+    assert calls == [
+        (
+            "control",
+            {
+                "serialNumber": "SN123",
+                "checkCode": "code",
+                "payload": {"cmd": "stateCtrl_cmd", "args": {"action": "setClearPlatform"}},
+            },
+            15,
+        )
+    ]
+
+
+def test_flashforge_reprint_clears_waits_for_ready_then_starts_same_file():
+    client = FlashForgeLocalClient("192.0.2.211", "SN123", "code", model="Creator 5 Pro")
+    calls = []
+    details = iter(
+        [
+            {"status": "completed", "printFileName": "last-job.gcode.3mf", "firmwareVersion": "1.9.3"},
+            {"status": "ready", "printFileName": "last-job.gcode.3mf", "firmwareVersion": "1.9.3"},
+            {"status": "ready", "printFileName": "last-job.gcode.3mf", "firmwareVersion": "1.9.3"},
+        ]
+    )
+
+    def fake_post(path, payload, timeout=5):
+        calls.append((path, payload, timeout))
+        if path == "detail":
+            return {"code": 0, "detail": next(details)}
+        return {"code": 0}
+
+    client._post_json = fake_post
+
+    assert client.reprint_finished_job() is True
+    assert [call[0] for call in calls] == ["detail", "control", "detail", "detail", "printGcode"]
+    assert calls[1][1]["payload"] == {
+        "cmd": "stateCtrl_cmd",
+        "args": {"action": "setClearPlatform"},
+    }
+    assert calls[-1][1] == {
+        "serialNumber": "SN123",
+        "checkCode": "code",
+        "fileName": "last-job.gcode.3mf",
+        "levelingBeforePrint": False,
+    }
+
+
+def test_flashforge_reprint_refuses_when_printer_is_not_finished():
+    client = FlashForgeLocalClient("192.0.2.211", "SN123", "code", model="Creator 5 Pro")
+    client._fetch_detail = lambda: {"status": "ready", "printFileName": "last-job.gcode.3mf"}
+    client.clear_finished_job = MagicMock(return_value=True)
+
+    assert client.reprint_finished_job() is False
+    client.clear_finished_job.assert_not_called()
+
+
 def test_flashforge_emergency_stop_uses_bundled_moonraker_endpoint():
     client = FlashForgeLocalClient("192.0.2.211", "SN123", "code", model="Creator 5 Pro")
     calls = []

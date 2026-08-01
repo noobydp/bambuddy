@@ -566,6 +566,8 @@ describe('PrintersPage', () => {
     });
 
     it('shows the Creator 5 Pro firmware finish state when the queue plate-clear setting is disabled', async () => {
+      let clearRequests = 0;
+      let reprintRequests = 0;
       server.use(
         http.get('/api/v1/printers/', () => HttpResponse.json([{
           ...mockPrinters[0],
@@ -586,17 +588,65 @@ describe('PrintersPage', () => {
         http.get('/api/v1/settings/ui-preferences', () => HttpResponse.json({
           require_plate_clear: false,
         })),
+        http.post('/api/v1/printers/:id/flashforge/finished/clear', () => {
+          clearRequests += 1;
+          return HttpResponse.json({ success: true, message: 'Finished job cleared; printer is ready' });
+        }),
+        http.post('/api/v1/printers/:id/flashforge/finished/reprint', () => {
+          reprintRequests += 1;
+          return HttpResponse.json({ success: true, message: 'Reprint started' });
+        }),
       );
 
       render(<PrintersPage />);
 
       await waitFor(() => {
-        expect(screen.getAllByText('Plate not Clear').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Finished. Clear Plate').length).toBeGreaterThan(0);
       });
       expect(screen.queryByRole('button', { name: 'Mark plate as cleared' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Clear / OK' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reprint' })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Reprint' }));
+      expect(await screen.findByText('Reprint the completed job?')).toBeInTheDocument();
+      expect(reprintRequests).toBe(0);
+      fireEvent.click(screen.getAllByRole('button', { name: 'Reprint' }).at(-1)!);
+      await waitFor(() => expect(reprintRequests).toBe(1));
+      expect(clearRequests).toBe(0);
+    });
+
+    it('clears the Creator 5 Pro finished screen from the card', async () => {
+      let clearRequests = 0;
+      let flashForgeState = 'FINISH';
+      server.use(
+        http.get('/api/v1/printers/', () => HttpResponse.json([{
+          ...mockPrinters[0],
+          id: 5,
+          name: 'Creator 5 Pro',
+          provider: 'flashforge',
+          model: 'Flashforge Creator 5 Pro',
+        }])),
+        http.get('/api/v1/printers/:id/status', () => HttpResponse.json({
+          ...mockPrinterStatus,
+          provider: 'flashforge',
+          state: flashForgeState,
+          awaiting_plate_clear: false,
+        })),
+        http.get('/api/v1/settings/ui-preferences', () => HttpResponse.json({ require_plate_clear: false })),
+        http.post('/api/v1/printers/:id/flashforge/finished/clear', () => {
+          clearRequests += 1;
+          flashForgeState = 'IDLE';
+          return HttpResponse.json({ success: true, message: 'Finished job cleared; printer is ready' });
+        }),
+      );
+
+      render(<PrintersPage />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Clear / OK' }));
+      await waitFor(() => expect(clearRequests).toBe(1));
+      await waitFor(() => expect(screen.queryByText('Finished. Clear Plate')).not.toBeInTheDocument());
 
       fireEvent.click(screen.getByRole('button', { name: 'S' }));
-      expect(await screen.findByLabelText('Plate not Clear')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Finished. Clear Plate')).not.toBeInTheDocument();
     });
 
     it('does not show the FlashForge finish prompt for a Klipper printer', async () => {
@@ -627,7 +677,7 @@ describe('PrintersPage', () => {
       await waitFor(() => {
         expect(screen.getByText('TinyT')).toBeInTheDocument();
       });
-      expect(screen.queryByText('Plate not Clear')).not.toBeInTheDocument();
+      expect(screen.queryByText('Finished. Clear Plate')).not.toBeInTheDocument();
     });
 
     it('shows plate clear status and action on failed printers when not cleared', async () => {
