@@ -2413,6 +2413,13 @@ function PrinterCard({
   const lastPrint = lastPrints?.[0];
   const isPrintingOrPaused = status?.state === 'RUNNING' || status?.state === 'PAUSE';
   const needsPlateClear = requirePlateClear && status?.awaiting_plate_clear === true;
+  // Creator 5 Pro remains in its firmware-owned FINISH state until the user
+  // clears/acknowledges the completed job at the printer. Surface that real
+  // state even when Bambuddy's optional queue plate-clear gate is disabled.
+  const isFlashForgeFinished = fallbackProvider === 'flashforge'
+    && status?.connected === true
+    && status.state === 'FINISH';
+  const showFinishedPlateState = needsPlateClear || isFlashForgeFinished;
   const showClearPlateButton = status?.connected && needsPlateClear && !isPrintingOrPaused;
   const activePrintName = status?.current_print && isPrintingOrPaused
     ? formatPrintName(status.subtask_name || status.current_print || null, status.gcode_file, t, activePlateLabel)
@@ -2421,12 +2428,19 @@ function PrinterCard({
   useEffect(() => {
     if (activePrintName) {
       setRetainedPrintJob({ name: activePrintName, coverUrl: status?.cover_url ?? null });
-    } else if (!needsPlateClear) {
+    } else if (!showFinishedPlateState) {
       setRetainedPrintJob(null);
     }
-  }, [activePrintName, needsPlateClear, status?.cover_url]);
+  }, [activePrintName, showFinishedPlateState, status?.cover_url]);
   const plateStatus = (() => {
-    if (!requirePlateClear || !status?.connected) return null;
+    if (!status?.connected) return null;
+    if (isFlashForgeFinished) {
+      return {
+        label: t('printers.plateStatus.notCleared'),
+        className: 'bg-yellow-100 dark:bg-yellow-500/20 text-yellow-700 dark:text-yellow-400',
+      };
+    }
+    if (!requirePlateClear) return null;
     if (isPrintingOrPaused) {
       return {
         label: t('printers.plateStatus.inUse'),
@@ -3688,6 +3702,15 @@ function PrinterCard({
                       )}
                     </button>
                   )}
+                  {viewMode === 'compact' && isFlashForgeFinished && !showClearPlateButton && (
+                    <span
+                      className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border border-yellow-300 bg-yellow-100 text-yellow-700 dark:border-yellow-400/40 dark:bg-yellow-500/20 dark:text-yellow-400"
+                      aria-label={t('printers.plateStatus.notCleared')}
+                      title={t('printers.plateStatus.notCleared')}
+                    >
+                      <PlateClearedIcon className="h-3 w-3" />
+                    </span>
+                  )}
                 </div>
                 <p className="text-sm text-bambu-gray">
                   {printer.model || 'Unknown Model'}
@@ -4000,7 +4023,7 @@ function PrinterCard({
                 const hasProblem = status.state === 'FAILED' || hmsErrors.length > 0;
                 const compactProgress = status.state === 'RUNNING' || status.state === 'PAUSE'
                   ? Math.max(0, Math.min(100, status.progress || 0))
-                  : showClearPlateButton
+                  : showFinishedPlateState
                     ? 100
                     : hasProblem
                       ? 100
@@ -4039,7 +4062,7 @@ function PrinterCard({
                 {/* Current Print or Idle Placeholder */}
                 {(() => {
                   const isActivePrint = !!(status.current_print && (status.state === 'RUNNING' || status.state === 'PAUSE'));
-                  const showRetainedPrint = !isActivePrint && needsPlateClear && retainedPrintJob;
+                  const showRetainedPrint = !isActivePrint && showFinishedPlateState && retainedPrintJob;
                   const printName = isActivePrint ? activePrintName : showRetainedPrint ? retainedPrintJob.name : null;
                   const coverUrl = isActivePrint ? status.cover_url : showRetainedPrint ? retainedPrintJob.coverUrl : null;
                   const progress = isActivePrint ? (status.progress || 0) : showRetainedPrint ? 100 : 0;

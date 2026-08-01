@@ -565,6 +565,71 @@ describe('PrintersPage', () => {
       expect(screen.getAllByRole('button', { name: 'Mark plate as cleared' }).length).toBeGreaterThan(0);
     });
 
+    it('shows the Creator 5 Pro firmware finish state when the queue plate-clear setting is disabled', async () => {
+      server.use(
+        http.get('/api/v1/printers/', () => HttpResponse.json([{
+          ...mockPrinters[0],
+          id: 5,
+          name: 'Creator 5 Pro',
+          provider: 'flashforge',
+          model: 'Flashforge Creator 5 Pro',
+        }])),
+        http.get('/api/v1/printers/:id/status', () => HttpResponse.json({
+          ...mockPrinterStatus,
+          id: 5,
+          name: 'Creator 5 Pro',
+          provider: 'flashforge',
+          state: 'FINISH',
+          progress: 100,
+          awaiting_plate_clear: false,
+        })),
+        http.get('/api/v1/settings/ui-preferences', () => HttpResponse.json({
+          require_plate_clear: false,
+        })),
+      );
+
+      render(<PrintersPage />);
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Plate not Clear').length).toBeGreaterThan(0);
+      });
+      expect(screen.queryByRole('button', { name: 'Mark plate as cleared' })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'S' }));
+      expect(await screen.findByLabelText('Plate not Clear')).toBeInTheDocument();
+    });
+
+    it('does not show the FlashForge finish prompt for a Klipper printer', async () => {
+      server.use(
+        http.get('/api/v1/printers/', () => HttpResponse.json([{
+          ...mockPrinters[0],
+          id: 7,
+          name: 'TinyT',
+          provider: 'klipper',
+          model: 'Klipper',
+        }])),
+        http.get('/api/v1/printers/:id/status', () => HttpResponse.json({
+          ...mockPrinterStatus,
+          id: 7,
+          name: 'TinyT',
+          provider: 'klipper',
+          state: 'FINISH',
+          progress: 100,
+          awaiting_plate_clear: false,
+        })),
+        http.get('/api/v1/settings/ui-preferences', () => HttpResponse.json({
+          require_plate_clear: false,
+        })),
+      );
+
+      render(<PrintersPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('TinyT')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Plate not Clear')).not.toBeInTheDocument();
+    });
+
     it('shows plate clear status and action on failed printers when not cleared', async () => {
       server.use(
         http.get('/api/v1/printers/:id/status', () => {
