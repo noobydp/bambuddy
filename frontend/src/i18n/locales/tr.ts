@@ -418,6 +418,16 @@ export default {
       notCleared: 'Plaka Temiz Değil',
       inUse: 'Plaka Kullanımda',
     },
+    flashforge: {
+      finishedClearPlate: 'Tamamlandı. Plakayı boşaltın',
+      clearFinished: 'Tamamlanan baskıyı onayla',
+      clearOk: 'Boşalt / Tamam',
+      reprintFinished: 'Tamamlanan işi yeniden yazdır',
+      reprint: 'Yeniden yazdır',
+      reprintConfirmTitle: 'Tamamlanan iş yeniden yazdırılsın mı?',
+      reprintConfirmMessage: 'Bu işlem tamamlanma ekranını kapatır ve aynı kayıtlı dosyayı hemen yeniden başlatır. Devam etmeden önce baskı plakasının boş olduğunu doğrulayın.',
+      reprinting: 'Yeniden yazdırma başlatılıyor...',
+    },
     // Kuyruk bilgisi
     queue: {
       inQueue: 'Kuyrukta {{count}} baskı',

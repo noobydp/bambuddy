@@ -417,6 +417,16 @@ export default {
       notCleared: 'プレート未クリア',
       inUse: 'プレート使用中',
     },
+    flashforge: {
+      finishedClearPlate: '完了。プレートを空にしてください',
+      clearFinished: '完了した印刷を確認',
+      clearOk: 'クリア / OK',
+      reprintFinished: '完了した印刷を再印刷',
+      reprint: '再印刷',
+      reprintConfirmTitle: '完了した印刷を再印刷しますか？',
+      reprintConfirmMessage: '完了画面を閉じ、同じ保存済みファイルを直ちに再印刷します。続行する前にビルドプレートが空であることを確認してください。',
+      reprinting: '再印刷を開始しています...',
+    },
     // Queue info
     queue: {
       inQueue: 'キュー内 {{count}} 件',

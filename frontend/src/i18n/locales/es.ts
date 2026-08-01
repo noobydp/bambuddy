@@ -418,6 +418,16 @@ export default {
       notCleared: 'Cama no despejada',
       inUse: 'Cama en uso',
     },
+    flashforge: {
+      finishedClearPlate: 'Finalizado. Despeja la cama',
+      clearFinished: 'Confirmar impresión finalizada',
+      clearOk: 'Despejar / Aceptar',
+      reprintFinished: 'Reimprimir trabajo finalizado',
+      reprint: 'Reimprimir',
+      reprintConfirmTitle: '¿Reimprimir el trabajo finalizado?',
+      reprintConfirmMessage: 'Esto cierra la pantalla de finalización e inicia inmediatamente el mismo archivo guardado. Confirma que la cama esté despejada antes de continuar.',
+      reprinting: 'Iniciando reimpresión...',
+    },
     // Queue info
     queue: {
       inQueue: '{{count}} impresión en cola',

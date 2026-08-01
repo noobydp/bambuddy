@@ -392,6 +392,16 @@ export default {
       notCleared: '플레이트 미비움',
       inUse: '플레이트 사용 중'
     },
+    flashforge: {
+      finishedClearPlate: '완료됨. 플레이트를 비워 주세요',
+      clearFinished: '완료된 출력 확인',
+      clearOk: '비우기 / 확인',
+      reprintFinished: '완료된 작업 다시 출력',
+      reprint: '다시 출력',
+      reprintConfirmTitle: '완료된 작업을 다시 출력할까요?',
+      reprintConfirmMessage: '완료 화면을 닫고 같은 저장 파일을 즉시 다시 출력합니다. 계속하기 전에 빌드 플레이트가 비어 있는지 확인하세요.',
+      reprinting: '다시 출력을 시작하는 중...',
+    },
     queue: {
       inQueue: '대기열에 {{count}}개',
       inQueue_plural: '대기열에 {{count}}개'

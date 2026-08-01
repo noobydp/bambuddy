@@ -418,6 +418,16 @@ export default {
       notCleared: 'Placa não liberada',
       inUse: 'Placa em uso',
     },
+    flashforge: {
+      finishedClearPlate: 'Concluído. Libere a placa',
+      clearFinished: 'Confirmar impressão concluída',
+      clearOk: 'Liberar / OK',
+      reprintFinished: 'Reimprimir trabalho concluído',
+      reprint: 'Reimprimir',
+      reprintConfirmTitle: 'Reimprimir o trabalho concluído?',
+      reprintConfirmMessage: 'Isso fecha a tela de conclusão e inicia imediatamente o mesmo arquivo salvo. Confirme que a placa de impressão está livre antes de continuar.',
+      reprinting: 'Iniciando reimpressão...',
+    },
     // Queue info
     queue: {
       inQueue: '{{count}} impressão na fila',

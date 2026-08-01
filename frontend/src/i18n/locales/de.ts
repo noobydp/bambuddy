@@ -418,6 +418,16 @@ export default {
       notCleared: 'Platte nicht freigegeben',
       inUse: 'Platte in Benutzung',
     },
+    flashforge: {
+      finishedClearPlate: 'Fertig. Druckplatte leeren',
+      clearFinished: 'Abgeschlossenen Druck bestätigen',
+      clearOk: 'Leeren / OK',
+      reprintFinished: 'Abgeschlossenen Druck erneut drucken',
+      reprint: 'Erneut drucken',
+      reprintConfirmTitle: 'Abgeschlossenen Druck erneut drucken?',
+      reprintConfirmMessage: 'Dadurch wird der Abschlussbildschirm geschlossen und dieselbe gespeicherte Datei sofort erneut gestartet. Vergewissere dich vor dem Fortfahren, dass die Druckplatte leer ist.',
+      reprinting: 'Erneuter Druck wird gestartet ...',
+    },
     // Queue info
     queue: {
       inQueue: '{{count}} Druck in Warteschlange',

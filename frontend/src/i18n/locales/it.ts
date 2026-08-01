@@ -418,6 +418,16 @@ export default {
       notCleared: 'Piatto non libero',
       inUse: 'Piatto in uso',
     },
+    flashforge: {
+      finishedClearPlate: 'Completato. Libera il piatto',
+      clearFinished: 'Conferma stampa completata',
+      clearOk: 'Libera / OK',
+      reprintFinished: 'Ristampa il lavoro completato',
+      reprint: 'Ristampa',
+      reprintConfirmTitle: 'Ristampare il lavoro completato?',
+      reprintConfirmMessage: 'Questa azione chiude la schermata di completamento e avvia immediatamente lo stesso file salvato. Verifica che il piatto sia libero prima di continuare.',
+      reprinting: 'Avvio della ristampa...',
+    },
     // Queue info
     queue: {
       inQueue: '{{count}} stampa in coda',

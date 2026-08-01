@@ -418,6 +418,16 @@ export default {
       notCleared: 'Plateau non dégagé',
       inUse: 'Plateau en cours d\'utilisation',
     },
+    flashforge: {
+      finishedClearPlate: 'Terminé. Dégagez le plateau',
+      clearFinished: 'Confirmer l’impression terminée',
+      clearOk: 'Dégager / OK',
+      reprintFinished: 'Réimprimer le travail terminé',
+      reprint: 'Réimprimer',
+      reprintConfirmTitle: 'Réimprimer le travail terminé ?',
+      reprintConfirmMessage: 'Cette action ferme l’écran de fin et relance immédiatement le même fichier enregistré. Vérifiez que le plateau est dégagé avant de continuer.',
+      reprinting: 'Démarrage de la réimpression...',
+    },
     // Queue info
     queue: {
       inQueue: '{{count}} impression en file',

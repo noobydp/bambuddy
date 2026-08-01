@@ -418,6 +418,16 @@ export default {
       notCleared: '打印板未清理',
       inUse: '打印板使用中',
     },
+    flashforge: {
+      finishedClearPlate: '打印完成，请清空打印板',
+      clearFinished: '确认打印已完成',
+      clearOk: '清空 / 确定',
+      reprintFinished: '重新打印已完成的任务',
+      reprint: '重新打印',
+      reprintConfirmTitle: '重新打印已完成的任务？',
+      reprintConfirmMessage: '这将关闭完成界面并立即重新开始同一个已保存文件。继续前请确认打印板已清空。',
+      reprinting: '正在开始重新打印...',
+    },
     // Queue info
     queue: {
       inQueue: '队列中有 {{count}} 个打印任务',
