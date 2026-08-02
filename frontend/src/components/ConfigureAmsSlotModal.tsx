@@ -3,7 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { X, Loader2, Settings2, ChevronDown, CheckCircle2, RotateCcw } from 'lucide-react';
 import { api } from '../api/client';
-import type { KProfile } from '../api/client';
+import type { KProfile, Printer } from '../api/client';
 import { matchesPrinterModelSuffix, presetCompatibility, buildCompatibilityIndex } from '../utils/slicerPrinterMatch';
 import { toFilamentId, isGenericFilamentId } from './spool-form/utils';
 import { Button } from './Button';
@@ -50,6 +50,7 @@ interface ConfigureAmsSlotModalProps {
   slotInfo: SlotInfo;
   nozzleDiameter?: string;
   printerModel?: string;
+  printerProvider?: Printer['provider'];
   onSuccess?: () => void;
   fullScreen?: boolean;
 }
@@ -286,6 +287,7 @@ export function ConfigureAmsSlotModal({
   slotInfo,
   nozzleDiameter = '0.4',
   printerModel,
+  printerProvider,
   onSuccess,
   fullScreen,
 }: ConfigureAmsSlotModalProps) {
@@ -298,6 +300,7 @@ export function ConfigureAmsSlotModal({
   const [showSuccess, setShowSuccess] = useState(false);
   const [showExtendedColors, setShowExtendedColors] = useState(false);
   const scrolledToRef = useRef<string>('');
+  const supportsKProfiles = !printerProvider || printerProvider === 'bambu';
 
   // Fetch cloud settings (gracefully handle 401 when logged out)
   const { data: cloudSettings, isLoading: settingsLoading, isError: cloudError } = useQuery({
@@ -337,7 +340,7 @@ export function ConfigureAmsSlotModal({
   const { data: kprofilesData, isLoading: kprofilesLoading } = useQuery({
     queryKey: ['kprofiles', printerId, nozzleDiameter],
     queryFn: () => api.getKProfiles(printerId, nozzleDiameter),
-    enabled: isOpen && !!printerId,
+    enabled: isOpen && !!printerId && supportsKProfiles,
   });
 
   // Fetch color catalog

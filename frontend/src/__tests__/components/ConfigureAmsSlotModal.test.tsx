@@ -99,6 +99,15 @@ describe('ConfigureAmsSlotModal', () => {
     });
   });
 
+  it('does not request Bambu K-profiles for Klipper printers', async () => {
+    render(<ConfigureAmsSlotModal {...defaultProps} printerProvider="klipper" />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Configure AMS/)).toBeInTheDocument();
+    });
+    expect(api.getKProfiles).not.toHaveBeenCalled();
+  });
+
   it('displays basic color buttons', async () => {
     render(<ConfigureAmsSlotModal {...defaultProps} />);
     await waitFor(() => {

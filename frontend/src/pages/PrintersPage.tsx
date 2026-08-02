@@ -7172,6 +7172,7 @@ function PrinterCard({
           printerId={printer.id}
           slotInfo={configureSlotModal}
           printerModel={mapModelCode(printer.model) || undefined}
+          printerProvider={printer.provider}
           nozzleDiameter={resolveSlotNozzleDiameter(status, configureSlotModal.amsId)}
           onSuccess={() => {
             // Refresh slot presets to show updated profile name

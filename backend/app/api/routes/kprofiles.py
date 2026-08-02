@@ -22,10 +22,26 @@ from backend.app.schemas.kprofile import (
     KProfilesResponse,
 )
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.printer_providers import PROVIDER_BAMBU, provider_for_printer
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/printers/{printer_id}/kprofiles", tags=["kprofiles"])
+
+
+async def _require_bambu_kprofile_client(db: AsyncSession, printer_id: int):
+    """Return the connected Bambu client used by printer-side K-profiles."""
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    if provider_for_printer(printer) != PROVIDER_BAMBU:
+        raise HTTPException(501, "Printer-side K-profiles are only supported for Bambu Lab printers")
+
+    client = printer_manager.get_client(printer_id)
+    if not client or not getattr(getattr(client, "state", None), "connected", False):
+        raise HTTPException(400, "Printer not connected")
+    return printer, client
 
 
 @router.get("/", response_model=KProfilesResponse)
@@ -41,16 +57,7 @@ async def get_kprofiles(
         printer_id: ID of the printer
         nozzle_diameter: Filter by nozzle diameter (default: "0.4")
     """
-    # Check printer exists
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
-
-    # Get MQTT client for printer
-    client = printer_manager.get_client(printer_id)
-    if not client or not client.state.connected:
-        raise HTTPException(400, "Printer not connected")
+    _, client = await _require_bambu_kprofile_client(db, printer_id)
 
     # Request K-profiles from printer
     profiles = await client.get_kprofiles(nozzle_diameter=nozzle_diameter)
@@ -102,16 +109,7 @@ async def set_kprofile(
         f"name={profile.name}, filament_id={profile.filament_id}, k_value={profile.k_value}"
     )
 
-    # Check printer exists
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
-
-    # Get MQTT client for printer
-    client = printer_manager.get_client(printer_id)
-    if not client or not client.state.connected:
-        raise HTTPException(400, "Printer not connected")
+    printer, client = await _require_bambu_kprofile_client(db, printer_id)
 
     # Detect dual-nozzle for the in-place edit format. Runtime detection from
     # device.extruder.info beats serial-prefix heuristics — H2S shares prefix
@@ -206,16 +204,7 @@ async def set_kprofiles_batch(
     for p in profiles:
         logger.info("  - extruder_id=%s, name=%s, k_value=%s", p.extruder_id, p.name, p.k_value)
 
-    # Check printer exists
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
-
-    # Get MQTT client for printer
-    client = printer_manager.get_client(printer_id)
-    if not client or not client.state.connected:
-        raise HTTPException(400, "Printer not connected")
+    _, client = await _require_bambu_kprofile_client(db, printer_id)
 
     # Build list of profile dicts for batch command
     profile_dicts = [
@@ -255,16 +244,7 @@ async def delete_kprofile(
         printer_id: ID of the printer
         profile: K-profile identification data for deletion
     """
-    # Check printer exists
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
-
-    # Get MQTT client for printer
-    client = printer_manager.get_client(printer_id)
-    if not client or not client.state.connected:
-        raise HTTPException(400, "Printer not connected")
+    _, client = await _require_bambu_kprofile_client(db, printer_id)
 
     # Send the delete command to printer
     logger.info(

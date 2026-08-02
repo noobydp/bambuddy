@@ -750,6 +750,16 @@ export function KProfilesView() {
     queryFn: api.getPrinters,
   });
 
+  // Printer-side K-profiles use Bambu's MQTT calibration protocol. Klipper
+  // pressure advance and FlashForge calibration are managed by their own
+  // provider interfaces and must not be sent to these endpoints.
+  const connectedPrinters = React.useMemo(
+    () => printers?.filter(
+      (printer) => printer.is_active && (!printer.provider || printer.provider === 'bambu'),
+    ) || [],
+    [printers],
+  );
+
   // Get K-profiles for selected printer (filtered by nozzle diameter)
   const {
     data: kprofiles,
@@ -810,13 +820,10 @@ export function KProfilesView() {
 
   // Auto-select first connected printer
   useEffect(() => {
-    if (!selectedPrinter && printers && printers.length > 0) {
-      const activePrinter = printers.find((p) => p.is_active);
-      if (activePrinter) {
-        setSelectedPrinter(activePrinter.id);
-      }
+    if (!selectedPrinter || !connectedPrinters.some((printer) => printer.id === selectedPrinter)) {
+      setSelectedPrinter(connectedPrinters[0]?.id ?? null);
     }
-  }, [selectedPrinter, printers]);
+  }, [selectedPrinter, connectedPrinters]);
 
   // Refetch profiles when printer selection changes
   useEffect(() => {
@@ -828,9 +835,6 @@ export function KProfilesView() {
       return () => clearTimeout(timer);
     }
   }, [selectedPrinter, nozzleDiameter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Get connected printers for display
-  const connectedPrinters = printers?.filter((p) => p.is_active) || [];
 
   // Build filament lookup for name resolution (builtin + user cloud presets)
   const builtinFilamentMap = React.useMemo(() => {

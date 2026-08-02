@@ -20,6 +20,7 @@ from backend.app.models.spool import Spool
 from backend.app.models.spool_usage_history import SpoolUsageHistory
 from backend.app.services.git_providers.factory import get_provider_backend
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.printer_providers import PROVIDER_BAMBU, provider_for_printer
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +337,8 @@ class GitHubBackupService:
         nozzle_diameters = ["0.2", "0.4", "0.6", "0.8"]
 
         for printer in printers:
+            if provider_for_printer(printer) != PROVIDER_BAMBU:
+                continue
             client = printer_manager.get_client(printer.id)
             if not client or not client.state.connected:
                 continue

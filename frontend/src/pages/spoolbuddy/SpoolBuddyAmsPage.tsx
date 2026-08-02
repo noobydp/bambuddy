@@ -687,6 +687,7 @@ export function SpoolBuddyAmsPage() {
           printerId={selectedPrinterId}
           slotInfo={configureSlotModal}
           printerModel={mapModelCode(printer?.model ?? null) || undefined}
+          printerProvider={printer?.provider}
           nozzleDiameter={resolveSlotNozzleDiameter(status, configureSlotModal.amsId)}
           fullScreen
           onSuccess={() => {
